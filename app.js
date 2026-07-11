@@ -1,53 +1,11 @@
 const { useEffect, useMemo, useState } = React;
 
+const STORAGE_KEY = "readquest.save.v1";
+
 const genres = ["Fantasy", "Sci-Fi", "Mystery", "History", "Romance", "Nonfiction"];
 
-const startingBooks = [
-  {
-    id: 1,
-    title: "The Ember Library",
-    author: "Mira Vale",
-    genre: "Fantasy",
-    totalPages: 420,
-    pagesRead: 265,
-    status: "Reading",
-    startDate: "2026-06-01",
-    coverUrl: "",
-    xpEarned: 265,
-  },
-  {
-    id: 2,
-    title: "Moonlit Machines",
-    author: "J. K. Nox",
-    genre: "Sci-Fi",
-    totalPages: 310,
-    pagesRead: 310,
-    status: "Completed",
-    startDate: "2026-05-04",
-    coverUrl: "",
-    xpEarned: 510,
-  },
-  {
-    id: 3,
-    title: "Cartographer's Oath",
-    author: "Ren Sable",
-    genre: "Fantasy",
-    totalPages: 500,
-    pagesRead: 0,
-    status: "Want to Read",
-    startDate: "",
-    coverUrl: "",
-    xpEarned: 0,
-  },
-];
-
-const startingActivity = [
-  { id: 1, date: "Jul 10", title: "The Ember Library", pages: 36, xp: 43 },
-  { id: 2, date: "Jul 09", title: "The Ember Library", pages: 22, xp: 26 },
-  { id: 3, date: "Jul 08", title: "Moonlit Machines", pages: 44, xp: 52 },
-  { id: 4, date: "Jul 07", title: "Moonlit Machines", pages: 30, xp: 36 },
-  { id: 5, date: "Jul 06", title: "The Ember Library", pages: 18, xp: 21 },
-];
+const startingBooks = [];
+const startingActivity = [];
 
 const skillTrees = [
   {
@@ -110,6 +68,54 @@ const stages = [
 ];
 
 const enemyNames = ["Page Imp", "Ink Slime", "Bookmark Bandit"];
+
+const defaultGameState = {
+  books: startingBooks,
+  activity: startingActivity,
+  xp: 0,
+  coins: 0,
+  totalCoinsEarned: 0,
+  skillPoints: 0,
+  skills: { speed: 0, night: 0, biblio: 0, sword: 0, will: 0, reflex: 0, fashion: 0, treasure: 0 },
+  streak: 0,
+  inventory: ["hair-raven", "outfit-apprentice", "acc-none", "wood-staff"],
+  equipped: { hair: "hair-raven", outfit: "outfit-apprentice", accessory: "acc-none", weapon: "wood-staff" },
+  adventureProgress: { enemiesDefeated: 0, bossesDefeated: 0, clearedStages: [], rewards: [] },
+  achievements: [],
+  settings: { darkMode: true, displayName: "Reader", seenOnboarding: false },
+};
+
+const achievementsCatalog = [
+  { id: "first-chapter", name: "First Chapter", description: "Log pages for your first book.", test: ({ activity }) => activity.length >= 1 },
+  { id: "century", name: "Century", description: "Read 100 pages total.", test: ({ stats }) => stats.pages >= 100 },
+  { id: "bookworm", name: "Bookworm", description: "Complete 5 books.", test: ({ stats }) => stats.completed >= 5 },
+  { id: "unstoppable", name: "Unstoppable", description: "Reach a 7-day reading streak.", test: ({ streak }) => streak >= 7 },
+  { id: "dragon-slayer", name: "Dragon Slayer", description: "Defeat your first boss.", test: ({ adventureProgress }) => adventureProgress.bossesDefeated >= 1 },
+  { id: "chapter-cleared", name: "Chapter Cleared", description: "Clear one adventure chapter.", test: ({ adventureProgress }) => adventureProgress.clearedStages.length >= 1 },
+  { id: "level-five", name: "Rising Hero", description: "Reach level 5.", test: ({ levelInfo }) => levelInfo.level >= 5 },
+  { id: "skill-initiate", name: "Skill Initiate", description: "Buy your first skill rank.", test: ({ skills }) => Object.values(skills).some((rank) => rank > 0) },
+  { id: "coin-collector", name: "Coin Collector", description: "Earn 500 gold total.", test: ({ totalCoinsEarned }) => totalCoinsEarned >= 500 },
+  { id: "library-builder", name: "Library Builder", description: "Add 10 books to your library.", test: ({ books }) => books.length >= 10 },
+  { id: "boss-hunter", name: "Boss Hunter", description: "Defeat 3 bosses.", test: ({ adventureProgress }) => adventureProgress.bossesDefeated >= 3 },
+  { id: "style-quest", name: "Style Quest", description: "Own 6 avatar items.", test: ({ inventory }) => inventory.length >= 6 },
+];
+
+function loadGameState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (!saved) return defaultGameState;
+    return {
+      ...defaultGameState,
+      ...saved,
+      skills: { ...defaultGameState.skills, ...(saved.skills || {}) },
+      equipped: { ...defaultGameState.equipped, ...(saved.equipped || {}) },
+      adventureProgress: { ...defaultGameState.adventureProgress, ...(saved.adventureProgress || {}) },
+      settings: { ...defaultGameState.settings, ...(saved.settings || {}) },
+    };
+  } catch {
+    return defaultGameState;
+  }
+}
 
 function h(type, props, ...children) {
   return React.createElement(type, props || {}, ...children.flat());
@@ -181,8 +187,8 @@ function Toast({ toast, onDone }) {
   );
 }
 
-function Nav({ page, setPage, levelInfo, coins, streakMultiplier }) {
-  const links = ["Home", "My Books", "Avatar", "Adventure"];
+function Nav({ page, setPage, levelInfo, coins, streakMultiplier, coinFloat }) {
+  const links = ["Home", "My Books", "Avatar", "Adventure", "Achievements", "Settings"];
   return h(
     "nav",
     { className: "top-nav" },
@@ -192,7 +198,7 @@ function Nav({ page, setPage, levelInfo, coins, streakMultiplier }) {
       { className: "nav-center" },
       h("span", { className: "level-badge" }, `Lv. ${levelInfo.level}`),
       h("div", { className: "nav-xp" }, h("span", null, `${levelInfo.current}/${levelInfo.needed} XP`), h(ProgressBar, { value: (levelInfo.current / levelInfo.needed) * 100 })),
-      h("span", { className: "coin-badge" }, `Gold ${coins}`),
+      h("span", { className: "coin-badge coin-wrap" }, `Gold ${coins}`, coinFloat && h("b", { key: coinFloat.id, className: "coin-float" }, `+${coinFloat.amount}`)),
       h("span", { className: "streak-badge" }, `${streakMultiplier}x streak`)
     ),
     h(
@@ -209,7 +215,7 @@ function Nav({ page, setPage, levelInfo, coins, streakMultiplier }) {
   );
 }
 
-function HomePage({ books, activity, stats, onLog, setPage, levelInfo, streakMultiplier, skills, skillPoints, buySkill }) {
+function HomePage({ books, activity, stats, onLog, setPage, levelInfo, streakMultiplier, skills, skillPoints, buySkill, displayName }) {
   const activeBook = books.find((book) => book.status === "Reading") || books[0];
   return h(
     "main",
@@ -225,7 +231,7 @@ function HomePage({ books, activity, stats, onLog, setPage, levelInfo, streakMul
     h(
       "section",
       { className: "wide-panel xp-panel" },
-      h("div", null, h("h2", null, "Hero Progress"), h("p", null, `Level ${levelInfo.level} quester, ${levelInfo.needed - levelInfo.current} XP to next level`)),
+      h("div", null, h("h2", null, `${displayName}'s Hero Progress`), h("p", null, `Level ${levelInfo.level} quester, ${levelInfo.needed - levelInfo.current} XP to next level`)),
       h("span", { className: "streak-badge large" }, `${streakMultiplier}x active multiplier`),
       h(ProgressBar, { value: (levelInfo.current / levelInfo.needed) * 100 })
     ),
@@ -257,9 +263,11 @@ function HomePage({ books, activity, stats, onLog, setPage, levelInfo, streakMul
         "article",
         { className: "panel activity-feed" },
         h("h2", null, "Recent Activity"),
-        activity.slice(0, 5).map((entry) =>
-          h("div", { key: entry.id, className: "activity-item" }, h("span", null, entry.date), h("strong", null, entry.title), h("em", null, `${entry.pages} pages`), h("b", null, `+${entry.xp} XP`))
-        )
+        activity.length
+          ? activity.slice(0, 5).map((entry) =>
+              h("div", { key: entry.id, className: "activity-item" }, h("span", null, entry.date), h("strong", null, entry.title), h("em", null, `${entry.pages} pages`), h("b", null, `+${entry.xp} XP`))
+            )
+          : h("p", null, "Your quest log is waiting for its first entry.")
       )
     ),
     h(SkillTree, { skills, skillPoints, buySkill })
@@ -396,6 +404,65 @@ function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage 
             h(Button, { className: "secondary", onClick: () => buyItem(item), disabled: owned || item.price > coins }, owned ? "Owned" : `Buy ${item.price}g`)
           );
         })
+      )
+    )
+  );
+}
+
+function AchievementsPage({ unlocked }) {
+  return h(
+    "main",
+    { className: "page achievements-page" },
+    h("div", { className: "section-heading" }, h("h1", null, "Achievements"), h("span", { className: "skill-points" }, `${unlocked.length}/${achievementsCatalog.length} unlocked`)),
+    h(
+      "section",
+      { className: "achievement-grid" },
+      achievementsCatalog.map((achievement) => {
+        const earned = unlocked.includes(achievement.id);
+        return h(
+          "article",
+          { key: achievement.id, className: `achievement-card ${earned ? "unlocked" : "locked"}` },
+          h("span", { className: "achievement-medal" }, earned ? "*" : "?"),
+          h("div", null, h("h3", null, achievement.name), h("p", null, achievement.description), h("small", null, earned ? "Unlocked" : "Locked"))
+        );
+      })
+    )
+  );
+}
+
+function SettingsPage({ settings, setSettings, onReset }) {
+  return h(
+    "main",
+    { className: "page settings-page" },
+    h("div", { className: "section-heading" }, h("h1", null, "Settings")),
+    h(
+      "section",
+      { className: "wide-panel settings-panel" },
+      h(
+        "label",
+        { className: "setting-row" },
+        h("span", null, h("strong", null, "Display name"), h("small", null, "Shown on your hero progress panel.")),
+        h("input", {
+          value: settings.displayName,
+          maxLength: 24,
+          onChange: (event) => setSettings((current) => ({ ...current, displayName: event.target.value })),
+        })
+      ),
+      h(
+        "label",
+        { className: "setting-row compact" },
+        h("span", null, h("strong", null, "Light mode"), h("small", null, "Switch the whole quest journal theme.")),
+        h("input", {
+          type: "checkbox",
+          checked: !settings.darkMode,
+          onChange: (event) => setSettings((current) => ({ ...current, darkMode: !event.target.checked })),
+        })
+      ),
+      h(
+        "div",
+        { className: "setting-row danger-row" },
+        h("span", null, h("strong", null, "Reset Progress"), h("small", null, "Clear books, XP, coins, avatar unlocks, achievements, and adventure progress.")),
+        h(Button, { className: "danger", onClick: onReset }, "Reset")
       )
     )
   );
@@ -591,20 +658,27 @@ function Modal({ title, children, onClose }) {
 }
 
 function App() {
+  const saved = useMemo(loadGameState, []);
   const [page, setPage] = useState("Home");
-  const [books, setBooks] = useState(startingBooks);
-  const [activity, setActivity] = useState(startingActivity);
+  const [books, setBooks] = useState(saved.books);
+  const [activity, setActivity] = useState(saved.activity);
   const [filter, setFilter] = useState("All");
-  const [xp, setXp] = useState(1800);
-  const [coins, setCoins] = useState(275);
-  const [skillPoints, setSkillPoints] = useState(3);
-  const [skills, setSkills] = useState({ speed: 1, night: 0, biblio: 0, sword: 0, will: 0, reflex: 0, fashion: 0, treasure: 0 });
-  const [streak, setStreak] = useState(7);
+  const [xp, setXp] = useState(saved.xp);
+  const [coins, setCoins] = useState(saved.coins);
+  const [totalCoinsEarned, setTotalCoinsEarned] = useState(saved.totalCoinsEarned);
+  const [skillPoints, setSkillPoints] = useState(saved.skillPoints);
+  const [skills, setSkills] = useState(saved.skills);
+  const [streak, setStreak] = useState(saved.streak);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState("");
   const [levelOverlay, setLevelOverlay] = useState(null);
-  const [inventory, setInventory] = useState(["hair-raven", "outfit-apprentice", "acc-none", "wood-staff"]);
-  const [equipped, setEquipped] = useState({ hair: "hair-raven", outfit: "outfit-apprentice", accessory: "acc-none", weapon: "wood-staff" });
+  const [achievementPop, setAchievementPop] = useState(null);
+  const [coinFloat, setCoinFloat] = useState(null);
+  const [inventory, setInventory] = useState(saved.inventory);
+  const [equipped, setEquipped] = useState(saved.equipped);
+  const [adventureProgress, setAdventureProgress] = useState(saved.adventureProgress);
+  const [achievements, setAchievements] = useState(saved.achievements);
+  const [settings, setSettings] = useState(saved.settings);
 
   const levelInfo = useMemo(() => levelForXp(xp), [xp]);
   const streakMultiplier = streak >= 30 ? 2 : streak >= 7 ? 1.5 : streak >= 3 ? 1.2 : 1;
@@ -618,6 +692,41 @@ function App() {
     completed: books.filter((book) => book.status === "Completed").length,
     streak,
     xp,
+  };
+
+  useEffect(() => {
+    document.body.classList.toggle("light-mode", !settings.darkMode);
+  }, [settings.darkMode]);
+
+  useEffect(() => {
+    const gameState = { books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, settings };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
+  }, [books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, settings]);
+
+  useEffect(() => {
+    if (page === "Home" && books.length === 0 && !settings.seenOnboarding && !modal) {
+      setModal({ type: "welcome" });
+    }
+  }, [page, books.length, settings.seenOnboarding, modal]);
+
+  useEffect(() => {
+    const context = { books, activity, stats, streak, skills, inventory, adventureProgress, totalCoinsEarned, levelInfo };
+    const newlyUnlocked = achievementsCatalog.filter((achievement) => !achievements.includes(achievement.id) && achievement.test(context));
+    if (!newlyUnlocked.length) return;
+    setAchievements((current) => [...current, ...newlyUnlocked.map((achievement) => achievement.id)]);
+    setAchievementPop(newlyUnlocked[0]);
+    setToast(`Achievement unlocked: ${newlyUnlocked[0].name}`);
+  }, [books, activity, stats.pages, stats.completed, streak, skills, inventory, adventureProgress, totalCoinsEarned, levelInfo.level, achievements]);
+
+  const changeCoins = (amount, animate = false) => {
+    setCoins((current) => current + amount);
+    if (amount > 0) {
+      setTotalCoinsEarned((current) => current + amount);
+    }
+    if (animate && amount > 0) {
+      setCoinFloat({ amount, id: Date.now() });
+      window.setTimeout(() => setCoinFloat(null), 1200);
+    }
   };
 
   const addXp = (amount) => {
@@ -655,8 +764,8 @@ function App() {
       })
     );
     addXp(xpGain + completedBonus);
-    setCoins((current) => current + coinGain);
-    setStreak((current) => Math.max(current, current + 1));
+    changeCoins(coinGain, true);
+    setStreak((current) => current + 1);
     setActivity((current) => [{ id: Date.now(), date: todayLabel(), title: book.title, pages, xp: xpGain + completedBonus }, ...current].slice(0, 10));
     setModal(null);
     setToast(completedBonus ? `Quest complete! ${book.title} awarded a ${completedBonus} XP bonus.` : `Logged ${pages} pages for ${book.title}.`);
@@ -695,38 +804,90 @@ function App() {
 
   const buyItem = (item) => {
     if (inventory.includes(item.id) || coins < item.price) return;
-    setCoins((current) => current - item.price);
+    changeCoins(-item.price);
     setInventory((current) => [...current, item.id]);
     setToast(`${item.name} unlocked.`);
   };
 
   const awardAdventure = ({ xp: xpAward, gold, item }) => {
     addXp(xpAward);
-    setCoins((current) => current + gold);
+    changeCoins(gold, true);
+    setAdventureProgress((current) => ({
+      ...current,
+      enemiesDefeated: current.enemiesDefeated + 1,
+      bossesDefeated: item ? current.bossesDefeated + 1 : current.bossesDefeated,
+      clearedStages: item && !current.clearedStages.includes(item) ? [...current.clearedStages, item] : current.clearedStages,
+    }));
     if (item) {
       const itemId = `reward-${item.toLowerCase().replaceAll(" ", "-")}`;
       setInventory((current) => (current.includes(itemId) ? current : [...current, itemId]));
     }
   };
 
+  const closeModal = () => {
+    if (modal?.type === "welcome") {
+      setSettings((current) => ({ ...current, seenOnboarding: true }));
+    }
+    setModal(null);
+  };
+
+  const openAddBook = () => {
+    setSettings((current) => ({ ...current, seenOnboarding: true }));
+    setModal({ type: "add" });
+  };
+
+  const resetProgress = () => {
+    setBooks(defaultGameState.books);
+    setActivity(defaultGameState.activity);
+    setXp(defaultGameState.xp);
+    setCoins(defaultGameState.coins);
+    setTotalCoinsEarned(defaultGameState.totalCoinsEarned);
+    setSkillPoints(defaultGameState.skillPoints);
+    setSkills(defaultGameState.skills);
+    setStreak(defaultGameState.streak);
+    setInventory(defaultGameState.inventory);
+    setEquipped(defaultGameState.equipped);
+    setAdventureProgress(defaultGameState.adventureProgress);
+    setAchievements(defaultGameState.achievements);
+    setSettings((current) => ({ ...defaultGameState.settings, darkMode: current.darkMode }));
+    setPage("Home");
+    setModal(null);
+    setToast("Progress reset.");
+  };
+
   const content =
     page === "Home"
-      ? h(HomePage, { books, activity, stats, onLog: (bookId) => setModal({ type: "log", bookId }), setPage, levelInfo, streakMultiplier, skills, skillPoints, buySkill })
+      ? h(HomePage, { books, activity, stats, onLog: (bookId) => setModal({ type: "log", bookId }), setPage, levelInfo, streakMultiplier, skills, skillPoints, buySkill, displayName: settings.displayName || "Reader" })
       : page === "My Books"
-        ? h(BooksPage, { books, filter, setFilter, onAddBook: () => setModal({ type: "add" }), onLog: (bookId) => setModal({ type: "log", bookId }) })
+        ? h(BooksPage, { books, filter, setFilter, onAddBook: openAddBook, onLog: (bookId) => setModal({ type: "log", bookId }) })
         : page === "Avatar"
           ? h(AvatarPage, { coins, inventory, equipped, setEquipped, buyItem, setPage })
-          : h(AdventurePage, { level: levelInfo.level, coins, combatStats, awardAdventure, inventory });
+          : page === "Adventure"
+            ? h(AdventurePage, { level: levelInfo.level, coins, combatStats, awardAdventure, inventory })
+            : page === "Achievements"
+              ? h(AchievementsPage, { unlocked: achievements })
+              : h(SettingsPage, { settings, setSettings, onReset: () => setModal({ type: "reset" }) });
 
   return h(
     React.Fragment,
     null,
-    h(Nav, { page, setPage, levelInfo, coins, streakMultiplier }),
+    h(Nav, { page, setPage, levelInfo, coins, streakMultiplier, coinFloat }),
     content,
+    modal?.type === "welcome" &&
+      h(
+        Modal,
+        { title: "Welcome to ReadQuest!", onClose: closeModal },
+        h(
+          "div",
+          { className: "welcome-modal" },
+          h("p", null, "Start your adventure - add your first book to earn XP."),
+          h(Button, { className: "big-cta", onClick: openAddBook }, "Add Book")
+        )
+      ),
     modal?.type === "add" &&
       h(
         Modal,
-        { title: "Add New Book", onClose: () => setModal(null) },
+        { title: "Add New Book", onClose: closeModal },
         h(
           "form",
           { className: "form-grid", onSubmit: addBook },
@@ -742,7 +903,7 @@ function App() {
     modal?.type === "log" &&
       h(
         Modal,
-        { title: "Log Pages", onClose: () => setModal(null) },
+        { title: "Log Pages", onClose: closeModal },
         h(
           "form",
           {
@@ -756,12 +917,43 @@ function App() {
           h(Button, { type: "submit" }, "Claim Rewards")
         )
       ),
+    modal?.type === "reset" &&
+      h(
+        Modal,
+        { title: "Reset Progress?", onClose: closeModal },
+        h(
+          "div",
+          { className: "confirm-modal" },
+          h("p", null, "This clears your books, XP, level, coins, avatar unlocks, skills, adventure progress, streak, and achievements."),
+          h("div", { className: "battle-actions" }, h(Button, { className: "secondary", onClick: closeModal }, "Cancel"), h(Button, { className: "danger", onClick: resetProgress }, "Reset Progress"))
+        )
+      ),
     h(Toast, { toast, onDone: () => setToast("") }),
+    achievementPop &&
+      h(
+        "div",
+        { className: "achievement-pop", onAnimationEnd: () => setAchievementPop(null) },
+        h("span", null, "*"),
+        h("strong", null, achievementPop.name),
+        h("small", null, "Achievement unlocked")
+      ),
     levelOverlay &&
       h(
         "div",
         { className: "level-overlay", onClick: () => setLevelOverlay(null) },
-        h("div", null, h("span", null, "LEVEL UP!"), h("strong", null, `Level ${levelOverlay.level}`), h("p", null, `+${levelOverlay.gained} skill points awarded`), h(Button, null, "Continue"))
+        h(
+          "div",
+          null,
+          h("i", { className: "particle p1" }),
+          h("i", { className: "particle p2" }),
+          h("i", { className: "particle p3" }),
+          h("i", { className: "particle p4" }),
+          h("i", { className: "particle p5" }),
+          h("span", null, "LEVEL UP!"),
+          h("strong", null, `Level ${levelOverlay.level}`),
+          h("p", null, `+${levelOverlay.gained} skill points awarded`),
+          h(Button, null, "Continue")
+        )
       )
   );
 }
