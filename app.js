@@ -139,6 +139,10 @@ function progressPercent(book) {
   return Math.min(100, Math.round((book.pagesRead / book.totalPages) * 100));
 }
 
+function pagesRemaining(book) {
+  return Math.max(0, book.totalPages - book.pagesRead);
+}
+
 function levelForXp(xp) {
   let level = 1;
   let remaining = xp;
@@ -216,7 +220,10 @@ function Nav({ page, setPage, levelInfo, coins, streakMultiplier, coinFloat }) {
 }
 
 function HomePage({ books, activity, stats, onLog, setPage, levelInfo, streakMultiplier, skills, skillPoints, buySkill, displayName }) {
-  const activeBook = books.find((book) => book.status === "Reading") || books[0];
+  const activeBook = books.find((book) => book.status === "Reading" && pagesRemaining(book) > 0) || books.find((book) => book.status !== "Completed" && pagesRemaining(book) > 0);
+  const nextBook = books.find((book) => book.status === "Want to Read");
+  const activeCount = books.filter((book) => book.status === "Reading" && pagesRemaining(book) > 0).length;
+  const completionRate = books.length ? Math.round((stats.completed / books.length) * 100) : 0;
   return h(
     "main",
     { className: "page home-page" },
@@ -230,10 +237,23 @@ function HomePage({ books, activity, stats, onLog, setPage, levelInfo, streakMul
     ),
     h(
       "section",
-      { className: "wide-panel xp-panel" },
-      h("div", null, h("h2", null, `${displayName}'s Hero Progress`), h("p", null, `Level ${levelInfo.level} quester, ${levelInfo.needed - levelInfo.current} XP to next level`)),
-      h("span", { className: "streak-badge large" }, `${streakMultiplier}x active multiplier`),
-      h(ProgressBar, { value: (levelInfo.current / levelInfo.needed) * 100 })
+      { className: "dashboard-grid" },
+      h(
+        "article",
+        { className: "wide-panel xp-panel dashboard-hero" },
+        h("div", null, h("span", { className: "eyebrow" }, "Hero Progress"), h("h2", null, `${displayName}'s ReadQuest`), h("p", null, `Level ${levelInfo.level} quester, ${levelInfo.needed - levelInfo.current} XP to next level`)),
+        h("span", { className: "streak-badge large" }, `${streakMultiplier}x active multiplier`),
+        h(ProgressBar, { value: (levelInfo.current / levelInfo.needed) * 100 })
+      ),
+      h(
+        "aside",
+        { className: "panel dashboard-summary" },
+        h("h2", null, "Quest Snapshot"),
+        h("div", { className: "summary-row" }, h("span", null, "Active books"), h("strong", null, activeCount)),
+        h("div", { className: "summary-row" }, h("span", null, "Completion"), h("strong", null, `${completionRate}%`)),
+        h("div", { className: "summary-row" }, h("span", null, "Next up"), h("strong", null, nextBook ? nextBook.title : "Add a book")),
+        h(Button, { className: "secondary", onClick: () => setPage("My Books") }, books.length ? "Manage Library" : "Add First Book")
+      )
     ),
     h(
       "section",
@@ -253,11 +273,11 @@ function HomePage({ books, activity, stats, onLog, setPage, levelInfo, streakMul
                 h("h3", null, activeBook.title),
                 h("p", null, activeBook.author),
                 h(ProgressBar, { value: progressPercent(activeBook) }),
-                h("small", null, `${activeBook.pagesRead} / ${activeBook.totalPages} pages`)
+                h("small", null, `${activeBook.pagesRead} / ${activeBook.totalPages} pages - ${pagesRemaining(activeBook)} left`)
               ),
               h(Button, { onClick: () => onLog(activeBook.id) }, "+ Log Pages")
             )
-          : h("p", null, "Add a book to begin your reading quest.")
+          : h("p", null, books.length ? "All caught up. Add another book to keep earning reading XP." : "Add a book to begin your reading quest.")
       ),
       h(
         "article",
@@ -319,18 +339,23 @@ function BooksPage({ books, filter, setFilter, onAddBook, onLog }) {
       "section",
       { className: "book-grid" },
       visibleBooks.map((book) =>
-        h(
-          "article",
-          { key: book.id, className: "book-card" },
-          h("div", { className: "cover tall" }, book.coverUrl ? h("img", { src: book.coverUrl, alt: "" }) : initials(book.title)),
-          h("span", { className: `status ${book.status.toLowerCase().replaceAll(" ", "-")}` }, book.status),
-          h("h3", null, book.title),
-          h("p", null, book.author),
-          h("small", null, `${book.genre} - ${book.totalPages} pages`),
-          h(ProgressBar, { value: progressPercent(book) }),
-          h("small", null, `${book.pagesRead} pages read - ${book.xpEarned} XP`),
-          h(Button, { className: "secondary", onClick: () => onLog(book.id) }, "Log Pages")
-        )
+        {
+          const complete = pagesRemaining(book) === 0 || book.status === "Completed";
+          return h(
+            "article",
+            { key: book.id, className: `book-card ${complete ? "complete" : ""}` },
+            h("div", { className: "cover tall" }, book.coverUrl ? h("img", { src: book.coverUrl, alt: "" }) : initials(book.title)),
+            h("span", { className: `status ${book.status.toLowerCase().replaceAll(" ", "-")}` }, complete ? "Completed" : book.status),
+            h("h3", null, book.title),
+            h("p", null, book.author),
+            h("small", null, `${book.genre} - ${book.totalPages} pages`),
+            h(ProgressBar, { value: progressPercent(book) }),
+            h("small", null, complete ? `${book.totalPages} pages read - ${book.xpEarned} XP` : `${book.pagesRead} pages read - ${pagesRemaining(book)} left`),
+            complete
+              ? h("span", { className: "complete-pill" }, "Finished")
+              : h(Button, { className: "secondary", onClick: () => onLog(book.id) }, "Log Pages")
+          );
+        }
       )
     )
   );
@@ -477,13 +502,17 @@ function AdventurePage({ level, coins, combatStats, awardAdventure, inventory })
 
   const launchStage = (selected) => {
     if (level < selected.minLevel) return;
+    const enemyBaseHp = 18 + selected.id * 7;
+    const enemyBaseAtk = 3 + selected.id * 2;
+    const bossHp = 70 + selected.id * 28;
+    const bossAtk = 8 + selected.id * 3;
     setStage(selected);
     setPlayer({ x: 1, y: 1 });
     setEnemies([
-      { id: "e1", x: 4, y: 2, name: enemyNames[0], hp: 24 + selected.id * 8, atk: 5 + selected.id * 2, boss: false },
-      { id: "e2", x: 7, y: 4, name: enemyNames[1], hp: 26 + selected.id * 8, atk: 6 + selected.id * 2, boss: false },
-      { id: "e3", x: 3, y: 6, name: enemyNames[2], hp: 28 + selected.id * 8, atk: 7 + selected.id * 2, boss: false },
-      { id: "boss", x: 8, y: 7, name: selected.boss, hp: 90 + selected.id * 35, atk: 12 + selected.id * 4, boss: true },
+      { id: "e1", x: 4, y: 2, name: enemyNames[0], hp: enemyBaseHp, maxHp: enemyBaseHp, atk: enemyBaseAtk, boss: false },
+      { id: "e2", x: 7, y: 4, name: enemyNames[1], hp: enemyBaseHp + 5, maxHp: enemyBaseHp + 5, atk: enemyBaseAtk + 1, boss: false },
+      { id: "e3", x: 3, y: 6, name: enemyNames[2], hp: enemyBaseHp + 9, maxHp: enemyBaseHp + 9, atk: enemyBaseAtk + 2, boss: false },
+      { id: "boss", x: 8, y: 7, name: selected.boss, hp: bossHp, maxHp: bossHp, atk: bossAtk, boss: true },
     ]);
     setBattle(null);
     setMessage(`${selected.name} awaits. Clear the arena and defeat the boss.`);
@@ -499,7 +528,7 @@ function AdventurePage({ level, coins, combatStats, awardAdventure, inventory })
     }
     setPlayer(next);
     if (enemy) {
-      setBattle({ enemy, playerHp: combatStats.hp, defending: false });
+      setBattle({ enemy, playerHp: combatStats.hp, defending: false, potionUsed: false });
       setMessage(`Battle started: ${enemy.name}`);
     }
   };
@@ -531,8 +560,8 @@ function AdventurePage({ level, coins, combatStats, awardAdventure, inventory })
   };
 
   const endBattle = (enemy) => {
-    const xp = enemy.boss ? 300 + stage.id * 90 : 45 + stage.id * 20;
-    const gold = enemy.boss ? 180 + stage.id * 80 : 20 + stage.id * 10;
+    const xp = enemy.boss ? 220 + stage.id * 70 : 32 + stage.id * 16;
+    const gold = enemy.boss ? 120 + stage.id * 55 : 14 + stage.id * 8;
     awardAdventure({ xp, gold, item: enemy.boss ? stage.item : null });
     setEnemies((current) => current.filter((foe) => foe.id !== enemy.id));
     setBattle(null);
@@ -540,7 +569,13 @@ function AdventurePage({ level, coins, combatStats, awardAdventure, inventory })
   };
 
   const enemyTurn = (nextBattle, reducedDamage = false) => {
-    const incoming = Math.max(1, nextBattle.enemy.atk - (reducedDamage ? 8 : 0) + Math.floor(Math.random() * 5));
+    if (Math.random() < combatStats.dodge) {
+      setBattle({ ...nextBattle, defending: false });
+      setMessage(`You dodged ${nextBattle.enemy.name}'s counterattack.`);
+      return;
+    }
+    const guard = reducedDamage ? 10 + Math.floor(level / 3) : 0;
+    const incoming = Math.max(1, nextBattle.enemy.atk - guard + Math.floor(Math.random() * 4));
     const playerHp = nextBattle.playerHp - incoming;
     if (playerHp <= 0) {
       setBattle(null);
@@ -552,7 +587,7 @@ function AdventurePage({ level, coins, combatStats, awardAdventure, inventory })
   };
 
   const attack = () => {
-    const damage = combatStats.atk + Math.floor(Math.random() * 9);
+    const damage = combatStats.atk + Math.floor(Math.random() * 7);
     const enemy = { ...battle.enemy, hp: battle.enemy.hp - damage };
     if (enemy.hp <= 0) {
       endBattle(battle.enemy);
@@ -566,8 +601,13 @@ function AdventurePage({ level, coins, combatStats, awardAdventure, inventory })
   };
 
   const useItem = () => {
-    setBattle({ ...battle, playerHp: Math.min(combatStats.hp, battle.playerHp + 20) });
-    setMessage("You used a page potion and recovered 20 HP.");
+    if (battle.potionUsed) {
+      setMessage("Your page potion pouch is empty for this battle.");
+      return;
+    }
+    const heal = 22 + level * 2;
+    setBattle({ ...battle, potionUsed: true, playerHp: Math.min(combatStats.hp, battle.playerHp + heal) });
+    setMessage(`You used a page potion and recovered ${heal} HP.`);
   };
 
   const stageComplete = stage && enemies.length === 0;
@@ -583,7 +623,7 @@ function AdventurePage({ level, coins, combatStats, awardAdventure, inventory })
           "button",
           { key: chapter.id, className: `stage-card ${level < chapter.minLevel ? "locked" : ""} ${stage?.id === chapter.id ? "active" : ""}`, onClick: () => launchStage(chapter) },
           h("strong", null, chapter.name),
-          h("span", null, level < chapter.minLevel ? `Locked - Lv. ${chapter.minLevel}` : `Unlocked at Lv. ${chapter.minLevel}`),
+          h("span", null, level < chapter.minLevel ? `Locked - Lv. ${chapter.minLevel}` : `Recommended Lv. ${chapter.minLevel}+`),
           h("small", null, chapter.item)
         )
       )
@@ -635,10 +675,10 @@ function AdventurePage({ level, coins, combatStats, awardAdventure, inventory })
           "div",
           { className: "battle-card" },
           h("h2", null, battle.enemy.name),
-          h("div", { className: "battle-stats" }, h("span", null, `You HP ${battle.playerHp}/${combatStats.hp}`), h("span", null, `ATK ${combatStats.atk}`), h("span", null, `${battle.enemy.name} HP ${Math.max(0, battle.enemy.hp)}`), h("span", null, `ATK ${battle.enemy.atk}`)),
+          h("div", { className: "battle-stats" }, h("span", null, `You HP ${battle.playerHp}/${combatStats.hp}`), h("span", null, `ATK ${combatStats.atk} / Dodge ${Math.round(combatStats.dodge * 100)}%`), h("span", null, `${battle.enemy.name} HP ${Math.max(0, battle.enemy.hp)}`), h("span", null, `ATK ${battle.enemy.atk}`)),
           h(ProgressBar, { value: (battle.playerHp / combatStats.hp) * 100 }),
-          h(ProgressBar, { value: (battle.enemy.hp / (battle.enemy.boss ? 90 + stage.id * 35 : 40 + stage.id * 8)) * 100 }),
-          h("div", { className: "battle-actions" }, h(Button, { onClick: attack }, "Attack"), h(Button, { onClick: defend }, "Defend"), h(Button, { onClick: useItem }, "Use Item"))
+          h(ProgressBar, { value: (battle.enemy.hp / battle.enemy.maxHp) * 100 }),
+          h("div", { className: "battle-actions" }, h(Button, { onClick: attack }, "Attack"), h(Button, { onClick: defend }, "Defend"), h(Button, { onClick: useItem, disabled: battle.potionUsed }, battle.potionUsed ? "Potion Used" : "Use Potion"))
         )
       )
   );
@@ -684,8 +724,9 @@ function App() {
   const streakMultiplier = streak >= 30 ? 2 : streak >= 7 ? 1.5 : streak >= 3 ? 1.2 : 1;
   const equippedWeapon = weapons.find((weapon) => weapon.id === equipped.weapon) || weapons[0];
   const combatStats = {
-    hp: 50 + levelInfo.level * 10 + (skills.will || 0) * 15,
-    atk: 5 + levelInfo.level * 2 + equippedWeapon.atk + (skills.sword || 0) * 10,
+    hp: 58 + levelInfo.level * 12 + (skills.will || 0) * 16,
+    atk: 6 + levelInfo.level * 3 + equippedWeapon.atk + (skills.sword || 0) * 9,
+    dodge: Math.min(0.28, 0.05 + (skills.reflex || 0) * 0.06),
   };
   const stats = {
     pages: books.reduce((total, book) => total + book.pagesRead, 0),
@@ -743,16 +784,22 @@ function App() {
 
   const logPages = (bookId, pages) => {
     const book = books.find((item) => item.id === bookId);
-    if (!book || pages <= 0) return;
+    const remaining = book ? pagesRemaining(book) : 0;
+    if (!book || pages <= 0 || remaining <= 0) {
+      setModal(null);
+      setToast(book ? `${book.title} is already complete.` : "Choose a book with pages left to read.");
+      return;
+    }
+    const pagesToLog = Math.min(pages, remaining);
     const speedBonus = 1 + (skills.speed || 0) * 0.05;
-    const xpGain = Math.round(pages * speedBonus * streakMultiplier);
-    const treasureCoins = Math.floor(pages / 5) * (skills.treasure || 0);
-    const coinGain = Math.floor(pages / 10) + treasureCoins;
+    const xpGain = Math.round(pagesToLog * speedBonus * streakMultiplier);
+    const treasureCoins = Math.floor(pagesToLog / 5) * (skills.treasure || 0);
+    const coinGain = Math.floor(pagesToLog / 10) + treasureCoins;
     let completedBonus = 0;
     setBooks((current) =>
       current.map((item) => {
         if (item.id !== bookId) return item;
-        const pagesRead = Math.min(item.totalPages, item.pagesRead + pages);
+        const pagesRead = Math.min(item.totalPages, item.pagesRead + pagesToLog);
         const completed = pagesRead >= item.totalPages && item.status !== "Completed";
         completedBonus = completed ? 200 + (skills.biblio || 0) * 50 : 0;
         return {
@@ -766,9 +813,9 @@ function App() {
     addXp(xpGain + completedBonus);
     changeCoins(coinGain, true);
     setStreak((current) => current + 1);
-    setActivity((current) => [{ id: Date.now(), date: todayLabel(), title: book.title, pages, xp: xpGain + completedBonus }, ...current].slice(0, 10));
+    setActivity((current) => [{ id: Date.now(), date: todayLabel(), title: book.title, pages: pagesToLog, xp: xpGain + completedBonus }, ...current].slice(0, 10));
     setModal(null);
-    setToast(completedBonus ? `Quest complete! ${book.title} awarded a ${completedBonus} XP bonus.` : `Logged ${pages} pages for ${book.title}.`);
+    setToast(completedBonus ? `Quest complete! ${book.title} awarded a ${completedBonus} XP bonus.` : `Logged ${pagesToLog} pages for ${book.title}.`);
   };
 
   const addBook = (event) => {
@@ -836,6 +883,15 @@ function App() {
     setModal({ type: "add" });
   };
 
+  const openLogBook = (bookId) => {
+    const book = books.find((item) => item.id === bookId);
+    if (!book || pagesRemaining(book) <= 0 || book.status === "Completed") {
+      setToast(book ? `${book.title} is already complete.` : "Choose a book with pages left to read.");
+      return;
+    }
+    setModal({ type: "log", bookId });
+  };
+
   const resetProgress = () => {
     setBooks(defaultGameState.books);
     setActivity(defaultGameState.activity);
@@ -855,11 +911,14 @@ function App() {
     setToast("Progress reset.");
   };
 
+  const modalBook = modal?.type === "log" ? books.find((book) => book.id === modal.bookId) : null;
+  const modalBookRemaining = modalBook ? pagesRemaining(modalBook) : 0;
+
   const content =
     page === "Home"
-      ? h(HomePage, { books, activity, stats, onLog: (bookId) => setModal({ type: "log", bookId }), setPage, levelInfo, streakMultiplier, skills, skillPoints, buySkill, displayName: settings.displayName || "Reader" })
+      ? h(HomePage, { books, activity, stats, onLog: openLogBook, setPage, levelInfo, streakMultiplier, skills, skillPoints, buySkill, displayName: settings.displayName || "Reader" })
       : page === "My Books"
-        ? h(BooksPage, { books, filter, setFilter, onAddBook: openAddBook, onLog: (bookId) => setModal({ type: "log", bookId }) })
+        ? h(BooksPage, { books, filter, setFilter, onAddBook: openAddBook, onLog: openLogBook })
         : page === "Avatar"
           ? h(AvatarPage, { coins, inventory, equipped, setEquipped, buyItem, setPage })
           : page === "Adventure"
@@ -904,18 +963,21 @@ function App() {
       h(
         Modal,
         { title: "Log Pages", onClose: closeModal },
-        h(
-          "form",
-          {
-            className: "form-grid",
-            onSubmit: (event) => {
-              event.preventDefault();
-              logPages(modal.bookId, Number(new FormData(event.currentTarget).get("pages")));
-            },
-          },
-          h("label", null, "Pages read today", h("input", { name: "pages", type: "number", min: "1", required: true, autoFocus: true })),
-          h(Button, { type: "submit" }, "Claim Rewards")
-        )
+        modalBookRemaining > 0
+          ? h(
+              "form",
+              {
+                className: "form-grid",
+                onSubmit: (event) => {
+                  event.preventDefault();
+                  logPages(modal.bookId, Number(new FormData(event.currentTarget).get("pages")));
+                },
+              },
+              h("p", { className: "form-hint" }, `${modalBook.title} has ${modalBookRemaining} pages left.`),
+              h("label", null, "Pages read today", h("input", { name: "pages", type: "number", min: "1", max: String(modalBookRemaining), required: true, autoFocus: true })),
+              h(Button, { type: "submit" }, "Claim Rewards")
+            )
+          : h("p", null, modalBook ? `${modalBook.title} is already complete.` : "Choose a book with pages left to read.")
       ),
     modal?.type === "reset" &&
       h(
