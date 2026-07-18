@@ -1,6 +1,10 @@
 const { useEffect, useMemo, useState } = React;
 
 const STORAGE_KEY = "readquest.save.v1";
+const ACCOUNTS_KEY = "readquest.accounts.v1";
+const CURRENT_ACCOUNT_KEY = "readquest.currentAccount.v1";
+const ADMIN_EMAIL = "admin@readquest.com";
+const ADMIN_PASSWORD = "328729";
 
 const genres = ["Fantasy", "Sci-Fi", "Mystery", "History", "Romance", "Nonfiction"];
 
@@ -82,6 +86,7 @@ const defaultGameState = {
   equipped: { hair: "hair-raven", outfit: "outfit-apprentice", accessory: "acc-none", weapon: "wood-staff" },
   adventureProgress: { enemiesDefeated: 0, bossesDefeated: 0, clearedStages: [], rewards: [] },
   achievements: [],
+  adminLog: [],
   settings: { darkMode: true, displayName: "Reader", seenOnboarding: false },
 };
 
@@ -103,18 +108,75 @@ const achievementsCatalog = [
 function loadGameState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!saved) return defaultGameState;
-    return {
+    return sanitizeGameState(saved);
+  } catch {
+    return sanitizeGameState();
+  }
+}
+
+function cloneGameState(state = defaultGameState) {
+  return JSON.parse(JSON.stringify(state));
+}
+
+function sanitizeGameState(saved) {
+  if (!saved) return cloneGameState();
+  return {
       ...defaultGameState,
       ...saved,
+      books: saved.books || defaultGameState.books,
+      activity: saved.activity || defaultGameState.activity,
       skills: { ...defaultGameState.skills, ...(saved.skills || {}) },
       equipped: { ...defaultGameState.equipped, ...(saved.equipped || {}) },
       adventureProgress: { ...defaultGameState.adventureProgress, ...(saved.adventureProgress || {}) },
+      achievements: saved.achievements || defaultGameState.achievements,
+      adminLog: saved.adminLog || defaultGameState.adminLog,
       settings: { ...defaultGameState.settings, ...(saved.settings || {}) },
-    };
+  };
+}
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function loadAccounts() {
+  try {
+    const savedAccounts = JSON.parse(localStorage.getItem(ACCOUNTS_KEY));
+    const accounts = Array.isArray(savedAccounts) ? savedAccounts : [];
+    const normalized = accounts
+      .map((account) => ({
+        email: normalizeEmail(account.email),
+        password: String(account.password || ""),
+        isAdmin: Boolean(account.isAdmin),
+        gameState: sanitizeGameState(account.gameState),
+      }))
+      .filter((account) => account.email);
+    const adminIndex = normalized.findIndex((account) => account.email === ADMIN_EMAIL);
+    if (adminIndex >= 0) {
+      normalized[adminIndex] = { ...normalized[adminIndex], password: ADMIN_PASSWORD, isAdmin: true };
+      return normalized;
+    }
+    const legacyGameState = loadGameState();
+    return [
+      {
+        email: ADMIN_EMAIL,
+        password: ADMIN_PASSWORD,
+        isAdmin: true,
+        gameState: { ...legacyGameState, settings: { ...legacyGameState.settings, displayName: "Admin" } },
+      },
+      ...normalized,
+    ];
   } catch {
-    return defaultGameState;
+    return [{ email: ADMIN_EMAIL, password: ADMIN_PASSWORD, isAdmin: true, gameState: { ...cloneGameState(), settings: { ...defaultGameState.settings, displayName: "Admin" } } }];
   }
+}
+
+function xpForLevel(level) {
+  const safeLevel = Math.max(1, Math.floor(Number(level)) || 1);
+  let total = 0;
+  for (let current = 1; current < safeLevel; current += 1) {
+    total += current * 150;
+  }
+  return total;
 }
 
 function h(type, props, ...children) {
@@ -191,8 +253,34 @@ function Toast({ toast, onDone }) {
   );
 }
 
-function Nav({ page, setPage, levelInfo, coins, streakMultiplier, coinFloat }) {
-  const links = ["Home", "My Books", "Avatar", "Adventure", "Achievements", "Settings"];
+function LoginPage({ authMode, setAuthMode, onLogin, onRegister }) {
+  const isRegister = authMode === "register";
+  return h(
+    "main",
+    { className: "auth-page" },
+    h(
+      "section",
+      { className: "auth-panel" },
+      h("h1", null, "ReadQuest"),
+      h("p", null, isRegister ? "Create a reader account to begin." : "Sign in to continue your quest."),
+      h(
+        "form",
+        { className: "form-grid", onSubmit: isRegister ? onRegister : onLogin },
+        h("label", null, "Email", h("input", { name: "email", type: "email", required: true, autoFocus: true })),
+        h("label", null, "Password", h("input", { name: "password", type: "password", required: true })),
+        h(Button, { type: "submit" }, isRegister ? "Create Account" : "Sign In")
+      ),
+      h(
+        "button",
+        { className: "link-btn", onClick: () => setAuthMode(isRegister ? "login" : "register") },
+        isRegister ? "Use an existing account" : "Create a reader account"
+      )
+    )
+  );
+}
+
+function Nav({ page, setPage, levelInfo, coins, streakMultiplier, coinFloat, isAdmin, currentEmail, onLogout }) {
+  const links = ["Home", "My Books", "Avatar", "Adventure", "Achievements", ...(isAdmin ? ["Admin"] : []), "Settings"];
   return h(
     "nav",
     { className: "top-nav" },
@@ -214,7 +302,9 @@ function Nav({ page, setPage, levelInfo, coins, streakMultiplier, coinFloat }) {
           { key: link, className: page === link ? "active" : "", onClick: () => setPage(link) },
           link
         )
-      )
+      ),
+      h("span", { className: "account-badge" }, currentEmail),
+      h("button", { onClick: onLogout }, "Log Out")
     )
   );
 }
@@ -493,6 +583,85 @@ function SettingsPage({ settings, setSettings, onReset }) {
   );
 }
 
+function AdminPage({ accounts, currentEmail, selectedAccountEmail, setSelectedAccountEmail, targetGameState, onAdjustAdminResource, onSetBookPages, onSetAdminRole }) {
+  const targetAccount = accounts.find((account) => account.email === selectedAccountEmail) || accounts[0];
+  const selectedGameState = targetGameState || targetAccount?.gameState || defaultGameState;
+  const selectedLevel = levelForXp(selectedGameState.xp);
+  const isRootAdmin = targetAccount?.email === ADMIN_EMAIL;
+  return h(
+    "main",
+    { className: "page admin-page" },
+    h(
+      "div",
+      { className: "section-heading" },
+      h("h1", null, "Admin"),
+      h("span", { className: "skill-points" }, `${accounts.length} accounts`)
+    ),
+    h(
+      "section",
+      { className: "wide-panel admin-target" },
+      h("label", null, "Manage Account", h("select", { value: selectedAccountEmail, onChange: (event) => setSelectedAccountEmail(event.target.value) }, accounts.map((account) => h("option", { key: account.email, value: account.email }, `${account.email}${account.isAdmin ? " - admin" : ""}`)))),
+      h("div", { className: "admin-stat-strip" },
+        h("span", null, h("strong", null, selectedGameState.coins), " Gold"),
+        h("span", null, h("strong", null, selectedGameState.skillPoints), " Skill Points"),
+        h("span", null, h("strong", null, selectedLevel.level), " Level"),
+        h("span", null, h("strong", null, selectedGameState.books.length), " Books")
+      )
+    ),
+    h(
+      "section",
+      { className: "admin-layout" },
+      h(
+        "article",
+        { className: "wide-panel admin-panel" },
+        h("div", null, h("span", { className: "eyebrow" }, "Account Controls"), h("h2", null, selectedGameState.settings.displayName || targetAccount.email), h("p", null, "Change gold, skill points, XP, levels, book progress, and admin access.")),
+        h(
+          "form",
+          { className: "form-grid admin-actions", onSubmit: onAdjustAdminResource },
+          h("input", { type: "hidden", name: "email", value: targetAccount.email }),
+          h("label", null, "Resource", h("select", { name: "resource" }, h("option", { value: "coins" }, "Gold"), h("option", { value: "skillPoints" }, "Skill Points"), h("option", { value: "xp" }, "XP"), h("option", { value: "level" }, "Level"))),
+          h("label", null, "Action", h("select", { name: "mode" }, h("option", { value: "add" }, "Add"), h("option", { value: "take" }, "Take"), h("option", { value: "set" }, "Set exact value"))),
+          h("label", null, "Amount", h("input", { name: "amount", type: "number", min: "0", step: "1", required: true })),
+          h("label", { className: "admin-reason" }, "Reason", h("textarea", { name: "reason", rows: 3, maxLength: 120, placeholder: "Optional note" })),
+          h(Button, { type: "submit" }, "Apply Change")
+        ),
+        h(
+          "form",
+          { className: "form-grid admin-actions", onSubmit: onSetBookPages },
+          h("input", { type: "hidden", name: "email", value: targetAccount.email }),
+          h("label", null, "Book", h("select", { name: "bookId", disabled: selectedGameState.books.length === 0 }, selectedGameState.books.length ? selectedGameState.books.map((book) => h("option", { key: book.id, value: book.id }, `${book.title} (${book.pagesRead}/${book.totalPages})`)) : h("option", null, "No books yet"))),
+          h("label", null, "Pages Read", h("input", { name: "pagesRead", type: "number", min: "0", step: "1", required: true, disabled: selectedGameState.books.length === 0 })),
+          h(Button, { type: "submit", className: "secondary", disabled: selectedGameState.books.length === 0 }, "Update Book Pages")
+        ),
+        h(
+          "form",
+          { className: "form-grid admin-actions", onSubmit: onSetAdminRole },
+          h("input", { type: "hidden", name: "email", value: targetAccount.email }),
+          h("label", null, "Admin Access", h("select", { key: targetAccount.email, name: "isAdmin", defaultValue: String(Boolean(targetAccount.isAdmin)), disabled: isRootAdmin }, h("option", { value: "true" }, "Admin"), h("option", { value: "false" }, "Reader"))),
+          h("p", { className: "form-hint" }, isRootAdmin ? "The root admin account cannot be demoted." : targetAccount.email === currentEmail ? "This is your current account." : "Promote or remove admin access for this account."),
+          h(Button, { type: "submit", className: "secondary", disabled: isRootAdmin }, "Update Access")
+        )
+      ),
+      h(
+        "aside",
+        { className: "panel admin-ledger" },
+        h("h2", null, "Admin History"),
+        selectedGameState.adminLog.length
+          ? selectedGameState.adminLog.map((entry) =>
+              h(
+                "div",
+                { key: entry.id, className: "ledger-item" },
+                h("strong", null, entry.summary || `${entry.delta > 0 ? "+" : ""}${entry.delta} points`),
+                h("span", null, entry.reason || "Admin adjustment"),
+                h("small", null, entry.date)
+              )
+            )
+          : h("p", null, "No admin changes yet.")
+      )
+    )
+  );
+}
+
 function AdventurePage({ level, coins, combatStats, awardAdventure, inventory }) {
   const [stage, setStage] = useState(null);
   const [player, setPlayer] = useState({ x: 1, y: 1 });
@@ -698,7 +867,17 @@ function Modal({ title, children, onClose }) {
 }
 
 function App() {
-  const saved = useMemo(loadGameState, []);
+  const initialAccounts = useMemo(loadAccounts, []);
+  const initialCurrentEmail = useMemo(() => {
+    const storedEmail = normalizeEmail(localStorage.getItem(CURRENT_ACCOUNT_KEY));
+    return initialAccounts.some((account) => account.email === storedEmail) ? storedEmail : "";
+  }, [initialAccounts]);
+  const initialAccount = initialAccounts.find((account) => account.email === initialCurrentEmail);
+  const saved = initialAccount?.gameState || cloneGameState();
+  const [accounts, setAccounts] = useState(initialAccounts);
+  const [currentEmail, setCurrentEmail] = useState(initialCurrentEmail);
+  const [authMode, setAuthMode] = useState("login");
+  const [selectedAccountEmail, setSelectedAccountEmail] = useState(initialCurrentEmail || ADMIN_EMAIL);
   const [page, setPage] = useState("Home");
   const [books, setBooks] = useState(saved.books);
   const [activity, setActivity] = useState(saved.activity);
@@ -718,7 +897,12 @@ function App() {
   const [equipped, setEquipped] = useState(saved.equipped);
   const [adventureProgress, setAdventureProgress] = useState(saved.adventureProgress);
   const [achievements, setAchievements] = useState(saved.achievements);
+  const [adminLog, setAdminLog] = useState(saved.adminLog || []);
   const [settings, setSettings] = useState(saved.settings);
+
+  const currentAccount = accounts.find((account) => account.email === currentEmail);
+  const isAdmin = Boolean(currentAccount?.isAdmin);
+  const selectedAccount = accounts.find((account) => account.email === selectedAccountEmail) || accounts[0];
 
   const levelInfo = useMemo(() => levelForXp(xp), [xp]);
   const streakMultiplier = streak >= 30 ? 2 : streak >= 7 ? 1.5 : streak >= 3 ? 1.2 : 1;
@@ -740,15 +924,139 @@ function App() {
   }, [settings.darkMode]);
 
   useEffect(() => {
-    const gameState = { books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, settings };
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+  }, [accounts]);
+
+  useEffect(() => {
+    if (currentEmail) {
+      localStorage.setItem(CURRENT_ACCOUNT_KEY, currentEmail);
+      return;
+    }
+    localStorage.removeItem(CURRENT_ACCOUNT_KEY);
+  }, [currentEmail]);
+
+  useEffect(() => {
+    if (!currentEmail) return;
+    const gameState = { books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, adminLog, settings };
+    setAccounts((current) => current.map((account) => (account.email === currentEmail ? { ...account, gameState: sanitizeGameState(gameState) } : account)));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
-  }, [books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, settings]);
+  }, [currentEmail, books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, adminLog, settings]);
 
   useEffect(() => {
     if (page === "Home" && books.length === 0 && !settings.seenOnboarding && !modal) {
       setModal({ type: "welcome" });
     }
-  }, [page, books.length, settings.seenOnboarding, modal]);
+  }, [currentEmail, page, books.length, settings.seenOnboarding, modal]);
+
+  useEffect(() => {
+    if (page === "Admin" && !isAdmin) {
+      setPage("Home");
+    }
+  }, [page, isAdmin]);
+
+  useEffect(() => {
+    if (!accounts.some((account) => account.email === selectedAccountEmail)) {
+      setSelectedAccountEmail(currentEmail || accounts[0]?.email || ADMIN_EMAIL);
+    }
+  }, [accounts, currentEmail, selectedAccountEmail]);
+
+  const applyGameState = (gameState) => {
+    const next = sanitizeGameState(gameState);
+    setBooks(next.books);
+    setActivity(next.activity);
+    setXp(next.xp);
+    setCoins(next.coins);
+    setTotalCoinsEarned(next.totalCoinsEarned);
+    setSkillPoints(next.skillPoints);
+    setSkills(next.skills);
+    setStreak(next.streak);
+    setInventory(next.inventory);
+    setEquipped(next.equipped);
+    setAdventureProgress(next.adventureProgress);
+    setAchievements(next.achievements);
+    setAdminLog(next.adminLog);
+    setSettings(next.settings);
+  };
+
+  const signInAccount = (account) => {
+    setCurrentEmail(account.email);
+    setSelectedAccountEmail(account.email);
+    setPage("Home");
+    setModal(null);
+    applyGameState(account.gameState);
+  };
+
+  const login = (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = normalizeEmail(data.get("email"));
+    const password = String(data.get("password") || "");
+    const account = accounts.find((item) => item.email === email && item.password === password);
+    if (!account) {
+      setToast("Email or password is incorrect.");
+      return;
+    }
+    signInAccount(account);
+    setToast(`Signed in as ${email}.`);
+  };
+
+  const register = (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = normalizeEmail(data.get("email"));
+    const password = String(data.get("password") || "");
+    if (!email || !password) {
+      setToast("Enter an email and password.");
+      return;
+    }
+    if (email === ADMIN_EMAIL || accounts.some((account) => account.email === email)) {
+      setToast("That account already exists.");
+      return;
+    }
+    const account = {
+      email,
+      password,
+      isAdmin: false,
+      gameState: { ...cloneGameState(), settings: { ...defaultGameState.settings, displayName: email.split("@")[0] || "Reader" } },
+    };
+    setAccounts((current) => [...current, account]);
+    signInAccount(account);
+    setToast(`Account created for ${email}.`);
+  };
+
+  const logout = () => {
+    setCurrentEmail("");
+    setPage("Home");
+    setModal(null);
+    setToast("Signed out.");
+  };
+
+  const addAdminLogEntry = (gameState, summary, reason) => ({
+    ...gameState,
+    adminLog: [
+      {
+        id: Date.now(),
+        summary,
+        reason,
+        date: new Date().toLocaleString("en-US", { month: "short", day: "2-digit", hour: "numeric", minute: "2-digit" }),
+      },
+      ...(gameState.adminLog || []),
+    ].slice(0, 20),
+  });
+
+  const updateAccountGameState = (email, updater) => {
+    let nextGameState = null;
+    setAccounts((current) =>
+      current.map((account) => {
+        if (account.email !== email) return account;
+        nextGameState = sanitizeGameState(updater(sanitizeGameState(account.gameState)));
+        return { ...account, gameState: nextGameState };
+      })
+    );
+    if (email === currentEmail && nextGameState) {
+      applyGameState(nextGameState);
+    }
+  };
 
   useEffect(() => {
     const context = { books, activity, stats, streak, skills, inventory, adventureProgress, totalCoinsEarned, levelInfo };
@@ -905,14 +1213,90 @@ function App() {
     setEquipped(defaultGameState.equipped);
     setAdventureProgress(defaultGameState.adventureProgress);
     setAchievements(defaultGameState.achievements);
+    setAdminLog(defaultGameState.adminLog);
     setSettings((current) => ({ ...defaultGameState.settings, darkMode: current.darkMode }));
     setPage("Home");
     setModal(null);
     setToast("Progress reset.");
   };
 
+  const adjustAdminResource = (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = normalizeEmail(data.get("email"));
+    const resource = data.get("resource");
+    const mode = data.get("mode");
+    const amount = Math.floor(Number(data.get("amount")));
+    const reason = data.get("reason").trim();
+    if (!isAdmin || !email) return;
+    if (Number.isNaN(amount) || amount < 0) {
+      setToast("Enter a valid amount.");
+      return;
+    }
+    const resourceLabels = { coins: "gold", skillPoints: "skill points", xp: "XP", level: "level" };
+    if (!resourceLabels[resource]) {
+      setToast("Choose a resource to update.");
+      return;
+    }
+    updateAccountGameState(email, (gameState) => {
+      const next = sanitizeGameState(gameState);
+      const key = resource === "level" ? "xp" : resource;
+      const currentValue = resource === "level" ? levelForXp(next.xp).level : Number(next[key]) || 0;
+      let nextValue = mode === "set" ? amount : mode === "take" ? currentValue - amount : currentValue + amount;
+      nextValue = Math.max(resource === "level" ? 1 : 0, nextValue);
+      if (resource === "level") {
+        next.xp = xpForLevel(nextValue);
+      } else {
+        next[key] = nextValue;
+      }
+      if (resource === "coins" && next.coins > next.totalCoinsEarned) {
+        next.totalCoinsEarned = next.coins;
+      }
+      const summary = `${resourceLabels[resource]} ${currentValue} -> ${nextValue}`;
+      return addAdminLogEntry(next, summary, reason);
+    });
+    event.currentTarget.reset();
+    setToast(`Updated ${resourceLabels[resource]} for ${email}.`);
+  };
+
+  const setBookPages = (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = normalizeEmail(data.get("email"));
+    const bookId = String(data.get("bookId"));
+    const pagesRead = Math.floor(Number(data.get("pagesRead")));
+    if (!isAdmin || !email || Number.isNaN(pagesRead)) return;
+    updateAccountGameState(email, (gameState) => {
+      const next = sanitizeGameState(gameState);
+      let summary = "Book pages updated";
+      next.books = next.books.map((book) => {
+        if (String(book.id) !== bookId) return book;
+        const nextPages = clamp(pagesRead, 0, book.totalPages);
+        summary = `${book.title} pages ${book.pagesRead} -> ${nextPages}`;
+        return { ...book, pagesRead: nextPages, status: nextPages >= book.totalPages ? "Completed" : nextPages > 0 ? "Reading" : "Want to Read" };
+      });
+      return addAdminLogEntry(next, summary, "Book progress adjustment");
+    });
+    event.currentTarget.reset();
+    setToast(`Updated book pages for ${email}.`);
+  };
+
+  const setAdminRole = (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = normalizeEmail(data.get("email"));
+    const nextIsAdmin = data.get("isAdmin") === "true";
+    if (!isAdmin || !email || email === ADMIN_EMAIL) return;
+    setAccounts((current) => current.map((account) => (account.email === email ? { ...account, isAdmin: nextIsAdmin } : account)));
+    setToast(`${email} is now ${nextIsAdmin ? "an admin" : "a reader"}.`);
+  };
+
   const modalBook = modal?.type === "log" ? books.find((book) => book.id === modal.bookId) : null;
   const modalBookRemaining = modalBook ? pagesRemaining(modalBook) : 0;
+
+  if (!currentEmail) {
+    return h(React.Fragment, null, h(LoginPage, { authMode, setAuthMode, onLogin: login, onRegister: register }), h(Toast, { toast, onDone: () => setToast("") }));
+  }
 
   const content =
     page === "Home"
@@ -925,12 +1309,14 @@ function App() {
             ? h(AdventurePage, { level: levelInfo.level, coins, combatStats, awardAdventure, inventory })
             : page === "Achievements"
               ? h(AchievementsPage, { unlocked: achievements })
-              : h(SettingsPage, { settings, setSettings, onReset: () => setModal({ type: "reset" }) });
+              : page === "Admin" && isAdmin
+                ? h(AdminPage, { accounts, currentEmail, selectedAccountEmail, setSelectedAccountEmail, targetGameState: selectedAccount?.gameState, onAdjustAdminResource: adjustAdminResource, onSetBookPages: setBookPages, onSetAdminRole: setAdminRole })
+                : h(SettingsPage, { settings, setSettings, onReset: () => setModal({ type: "reset" }) });
 
   return h(
     React.Fragment,
     null,
-    h(Nav, { page, setPage, levelInfo, coins, streakMultiplier, coinFloat }),
+    h(Nav, { page, setPage, levelInfo, coins, streakMultiplier, coinFloat, isAdmin, currentEmail, onLogout: logout }),
     content,
     modal?.type === "welcome" &&
       h(

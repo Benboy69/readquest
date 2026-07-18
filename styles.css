@@ -44,7 +44,8 @@ body.light-mode {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -117,7 +118,8 @@ body.light-mode .top-nav {
 .level-badge,
 .coin-badge,
 .streak-badge,
-.skill-points {
+.skill-points,
+.account-badge {
   display: inline-flex;
   align-items: center;
   min-height: 2.15rem;
@@ -127,6 +129,53 @@ body.light-mode .top-nav {
   background: rgba(244, 201, 93, 0.12);
   color: var(--gold);
   font-weight: 800;
+}
+
+.account-badge {
+  max-width: 14rem;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-btn {
+  border: 0;
+  background: transparent;
+  color: var(--gold);
+  font-weight: 800;
+}
+
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 1rem;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 1rem;
+  width: min(28rem, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  background: linear-gradient(180deg, rgba(23, 36, 60, 0.96), rgba(13, 24, 42, 0.96));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.25);
+}
+
+.auth-panel h1 {
+  margin-bottom: 0;
+  color: var(--gold);
+  font-size: 2.4rem;
+}
+
+.auth-panel p {
+  color: var(--muted);
+}
+
+body.light-mode .auth-panel {
+  background: linear-gradient(180deg, rgba(255, 250, 240, 0.98), rgba(243, 234, 220, 0.98));
 }
 
 .coin-wrap {
@@ -269,7 +318,8 @@ small {
 
 .content-grid,
 .avatar-layout,
-.arena-layout {
+.arena-layout,
+.admin-layout {
   margin-top: 1rem;
 }
 
@@ -675,6 +725,82 @@ body.light-mode .battle-card {
   gap: 1rem;
 }
 
+.admin-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
+  gap: 1rem;
+}
+
+.admin-target {
+  display: grid;
+  grid-template-columns: minmax(16rem, 1fr) 2fr;
+  gap: 1rem;
+  align-items: end;
+  margin-top: 1rem;
+}
+
+.admin-target label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.admin-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.admin-stat-strip span {
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 0.75rem;
+  color: var(--muted);
+}
+
+.admin-stat-strip strong {
+  color: var(--text);
+  font-size: 1.35rem;
+}
+
+.admin-panel {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.admin-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-reason,
+.admin-actions .btn {
+  grid-column: 1 / -1;
+}
+
+.admin-ledger {
+  align-self: start;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ledger-item {
+  display: grid;
+  gap: 0.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 0.75rem;
+}
+
+.ledger-item strong {
+  color: var(--gold);
+}
+
+.ledger-item span {
+  color: var(--muted);
+}
+
 .setting-row {
   display: grid;
   grid-template-columns: 1fr minmax(12rem, 20rem);
@@ -698,7 +824,9 @@ body.light-mode .battle-card {
 
 body.light-mode .setting-row input,
 body.light-mode .form-grid input,
-body.light-mode .form-grid select {
+body.light-mode .form-grid select,
+body.light-mode .form-grid textarea,
+body.light-mode .admin-target select {
   border-color: rgba(29, 35, 48, 0.16);
   background: #fff;
 }
@@ -832,7 +960,9 @@ body.light-mode .form-grid select {
 }
 
 .form-grid input,
-.form-grid select {
+.form-grid select,
+.form-grid textarea,
+.admin-target select {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
@@ -841,8 +971,13 @@ body.light-mode .form-grid select {
   color: var(--text);
 }
 
+.form-grid textarea {
+  resize: vertical;
+}
+
 body.light-mode .form-grid input,
-body.light-mode .form-grid select {
+body.light-mode .form-grid select,
+body.light-mode .form-grid textarea {
   border-color: rgba(29, 35, 48, 0.16);
   background: #fff;
 }
@@ -1025,7 +1160,8 @@ body.light-mode .achievement-pop {
   .content-grid,
   .avatar-layout,
   .arena-layout,
-  .dashboard-grid {
+  .dashboard-grid,
+  .admin-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1064,6 +1200,7 @@ body.light-mode .achievement-pop {
   .tree-grid,
   .book-row,
   .setting-row,
+  .admin-actions,
   .achievement-card {
     grid-template-columns: 1fr;
   }
@@ -1086,7 +1223,8 @@ body.light-mode .achievement-pop {
   .level-badge,
   .coin-badge,
   .streak-badge,
-  .skill-points {
+  .skill-points,
+  .account-badge {
     min-height: 1.95rem;
     padding: 0.3rem 0.5rem;
     font-size: 0.85rem;
@@ -1115,6 +1253,11 @@ body.light-mode .achievement-pop {
   .battle-card {
     max-height: calc(100vh - 2rem);
     overflow: auto;
+  }
+
+  .admin-target,
+  .admin-stat-strip {
+    grid-template-columns: 1fr;
   }
 
   .achievement-pop {
