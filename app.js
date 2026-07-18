@@ -1,9 +1,7 @@
 const { useEffect, useMemo, useState } = React;
 
 const STORAGE_KEY = "readquest.save.v1";
-const ACCOUNTS_KEY = "readquest.accounts.v1";
-const CURRENT_ACCOUNT_KEY = "readquest.currentAccount.v1";
-const ADMIN_EMAIL = "admin@readquest.com";
+const ADMIN_USERNAME = "admin@readquest.com";
 const ADMIN_PASSWORD = "328729";
 
 const genres = ["Fantasy", "Sci-Fi", "Mystery", "History", "Romance", "Nonfiction"];
@@ -108,75 +106,18 @@ const achievementsCatalog = [
 function loadGameState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return sanitizeGameState(saved);
-  } catch {
-    return sanitizeGameState();
-  }
-}
-
-function cloneGameState(state = defaultGameState) {
-  return JSON.parse(JSON.stringify(state));
-}
-
-function sanitizeGameState(saved) {
-  if (!saved) return cloneGameState();
-  return {
+    if (!saved) return defaultGameState;
+    return {
       ...defaultGameState,
       ...saved,
-      books: saved.books || defaultGameState.books,
-      activity: saved.activity || defaultGameState.activity,
       skills: { ...defaultGameState.skills, ...(saved.skills || {}) },
       equipped: { ...defaultGameState.equipped, ...(saved.equipped || {}) },
       adventureProgress: { ...defaultGameState.adventureProgress, ...(saved.adventureProgress || {}) },
-      achievements: saved.achievements || defaultGameState.achievements,
-      adminLog: saved.adminLog || defaultGameState.adminLog,
       settings: { ...defaultGameState.settings, ...(saved.settings || {}) },
-  };
-}
-
-function normalizeEmail(email) {
-  return String(email || "").trim().toLowerCase();
-}
-
-function loadAccounts() {
-  try {
-    const savedAccounts = JSON.parse(localStorage.getItem(ACCOUNTS_KEY));
-    const accounts = Array.isArray(savedAccounts) ? savedAccounts : [];
-    const normalized = accounts
-      .map((account) => ({
-        email: normalizeEmail(account.email),
-        password: String(account.password || ""),
-        isAdmin: Boolean(account.isAdmin),
-        gameState: sanitizeGameState(account.gameState),
-      }))
-      .filter((account) => account.email);
-    const adminIndex = normalized.findIndex((account) => account.email === ADMIN_EMAIL);
-    if (adminIndex >= 0) {
-      normalized[adminIndex] = { ...normalized[adminIndex], password: ADMIN_PASSWORD, isAdmin: true };
-      return normalized;
-    }
-    const legacyGameState = loadGameState();
-    return [
-      {
-        email: ADMIN_EMAIL,
-        password: ADMIN_PASSWORD,
-        isAdmin: true,
-        gameState: { ...legacyGameState, settings: { ...legacyGameState.settings, displayName: "Admin" } },
-      },
-      ...normalized,
-    ];
+    };
   } catch {
-    return [{ email: ADMIN_EMAIL, password: ADMIN_PASSWORD, isAdmin: true, gameState: { ...cloneGameState(), settings: { ...defaultGameState.settings, displayName: "Admin" } } }];
+    return defaultGameState;
   }
-}
-
-function xpForLevel(level) {
-  const safeLevel = Math.max(1, Math.floor(Number(level)) || 1);
-  let total = 0;
-  for (let current = 1; current < safeLevel; current += 1) {
-    total += current * 150;
-  }
-  return total;
 }
 
 function h(type, props, ...children) {
@@ -219,6 +160,101 @@ function todayLabel() {
   return new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit" });
 }
 
+const STORAGE_USERS = "readquest_users";
+const STORAGE_SESSION = "readquest_session";
+
+function hashPassword(password) {
+  let hash = 0;
+  for (let i = 0; i < password.length; i += 1) {
+    hash = (hash << 5) - hash + password.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash.toString(36);
+}
+
+function getUsers() {
+  try {
+    const users = JSON.parse(localStorage.getItem(STORAGE_USERS)) || {};
+    const adminKey = ADMIN_USERNAME.toLowerCase();
+    if (!users[adminKey] || users[adminKey].passwordHash !== hashPassword(ADMIN_PASSWORD) || !users[adminKey].isAdmin) {
+      users[adminKey] = { username: ADMIN_USERNAME, passwordHash: hashPassword(ADMIN_PASSWORD), isAdmin: true };
+      saveUsers(users);
+      if (!localStorage.getItem(getUserDataKey(ADMIN_USERNAME))) {
+        saveUserData(ADMIN_USERNAME, { ...getDefaultGameState(), settings: { ...defaultGameState.settings, displayName: "Admin" } });
+      }
+    }
+    return users;
+  } catch {
+    const users = { [ADMIN_USERNAME.toLowerCase()]: { username: ADMIN_USERNAME, passwordHash: hashPassword(ADMIN_PASSWORD), isAdmin: true } };
+    saveUsers(users);
+    return users;
+  }
+}
+
+function saveUsers(users) {
+  localStorage.setItem(STORAGE_USERS, JSON.stringify(users));
+}
+
+function getUserDataKey(username) {
+  return `readquest_data_${username.toLowerCase()}`;
+}
+
+function getDefaultGameState() {
+  return JSON.parse(JSON.stringify(defaultGameState));
+}
+
+function normalizeGameState(saved = {}) {
+  return {
+    ...defaultGameState,
+    ...saved,
+    skills: { ...defaultGameState.skills, ...(saved.skills || {}) },
+    equipped: { ...defaultGameState.equipped, ...(saved.equipped || {}) },
+    adventureProgress: { ...defaultGameState.adventureProgress, ...(saved.adventureProgress || {}) },
+    achievements: saved.achievements || defaultGameState.achievements,
+    adminLog: saved.adminLog || defaultGameState.adminLog,
+    settings: { ...defaultGameState.settings, ...(saved.settings || {}) },
+  };
+}
+
+function loadUserData(username) {
+  try {
+    const saved = localStorage.getItem(getUserDataKey(username));
+    return saved ? normalizeGameState(JSON.parse(saved)) : getDefaultGameState();
+  } catch {
+    return getDefaultGameState();
+  }
+}
+
+function saveUserData(username, state) {
+  const { books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, adminLog, settings } = normalizeGameState(state);
+  localStorage.setItem(getUserDataKey(username), JSON.stringify({ books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, adminLog, settings }));
+}
+
+function xpForLevel(level) {
+  const safeLevel = Math.max(1, Math.floor(Number(level)) || 1);
+  let total = 0;
+  for (let current = 1; current < safeLevel; current += 1) {
+    total += current * 150;
+  }
+  return total;
+}
+
+function getSession() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_SESSION));
+  } catch {
+    return null;
+  }
+}
+
+function setSession(username) {
+  localStorage.setItem(STORAGE_SESSION, JSON.stringify({ username }));
+}
+
+function clearSession() {
+  localStorage.removeItem(STORAGE_SESSION);
+}
+
 function Button({ children, className = "", ...props }) {
   return h("button", { className: `btn ${className}`, ...props }, children);
 }
@@ -253,33 +289,7 @@ function Toast({ toast, onDone }) {
   );
 }
 
-function LoginPage({ authMode, setAuthMode, onLogin, onRegister }) {
-  const isRegister = authMode === "register";
-  return h(
-    "main",
-    { className: "auth-page" },
-    h(
-      "section",
-      { className: "auth-panel" },
-      h("h1", null, "ReadQuest"),
-      h("p", null, isRegister ? "Create a reader account to begin." : "Sign in to continue your quest."),
-      h(
-        "form",
-        { className: "form-grid", onSubmit: isRegister ? onRegister : onLogin },
-        h("label", null, "Email", h("input", { name: "email", type: "email", required: true, autoFocus: true })),
-        h("label", null, "Password", h("input", { name: "password", type: "password", required: true })),
-        h(Button, { type: "submit" }, isRegister ? "Create Account" : "Sign In")
-      ),
-      h(
-        "button",
-        { className: "link-btn", onClick: () => setAuthMode(isRegister ? "login" : "register") },
-        isRegister ? "Use an existing account" : "Create a reader account"
-      )
-    )
-  );
-}
-
-function Nav({ page, setPage, levelInfo, coins, streakMultiplier, coinFloat, isAdmin, currentEmail, onLogout }) {
+function Nav({ page, setPage, levelInfo, coins, streakMultiplier, coinFloat, user, isAdmin, onLogout }) {
   const links = ["Home", "My Books", "Avatar", "Adventure", "Achievements", ...(isAdmin ? ["Admin"] : []), "Settings"];
   return h(
     "nav",
@@ -303,8 +313,71 @@ function Nav({ page, setPage, levelInfo, coins, streakMultiplier, coinFloat, isA
           link
         )
       ),
-      h("span", { className: "account-badge" }, currentEmail),
-      h("button", { onClick: onLogout }, "Log Out")
+      h("span", { className: "user-badge" }, user),
+      h("button", { className: "logout-btn", onClick: onLogout, title: "Log out" }, "Log Out")
+    )
+  );
+}
+
+function AuthPage({ onLogin }) {
+  const [mode, setMode] = useState("login");
+  const [error, setError] = useState("");
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    setError("");
+    const data = new FormData(event.currentTarget);
+    const username = data.get("username").trim();
+    const password = data.get("password");
+    if (!username || !password) {
+      setError("Username and password are required.");
+      return;
+    }
+    const users = getUsers();
+    if (mode === "signup") {
+      if (users[username.toLowerCase()]) {
+        setError("That username is already taken.");
+        return;
+      }
+      users[username.toLowerCase()] = { username, passwordHash: hashPassword(password), isAdmin: false };
+      saveUsers(users);
+      saveUserData(username, getDefaultGameState());
+      setSession(username);
+      onLogin(username);
+      return;
+    }
+    const user = users[username.toLowerCase()];
+    if (!user || user.passwordHash !== hashPassword(password)) {
+      setError("Invalid username or password.");
+      return;
+    }
+    setSession(username);
+    onLogin(username);
+  };
+
+  return h(
+    "main",
+    { className: "auth-page" },
+    h(
+      "section",
+      { className: "auth-card" },
+      h("h1", null, "ReadQuest"),
+      h("p", { className: "auth-tagline" }, "Track your reading. Level up your hero."),
+      h(
+        "div",
+        { className: "tabs auth-tabs" },
+        h("button", { type: "button", className: mode === "login" ? "active" : "", onClick: () => { setMode("login"); setError(""); } }, "Log In"),
+        h("button", { type: "button", className: mode === "signup" ? "active" : "", onClick: () => { setMode("signup"); setError(""); } }, "Sign Up")
+      ),
+      h(
+        "form",
+        { className: "form-grid auth-form", onSubmit: handleSubmit },
+        h("label", null, "Username", h("input", { name: "username", required: true, autoComplete: "username", autoFocus: true })),
+        h("label", null, "Password", h("input", { name: "password", type: "password", required: true, autoComplete: mode === "login" ? "current-password" : "new-password", minLength: 4 })),
+        error && h("p", { className: "auth-error" }, error),
+        h(Button, { type: "submit" }, mode === "login" ? "Enter Quest" : "Create Account")
+      ),
+      h("p", { className: "auth-note" }, "Your progress is saved locally in this browser.")
     )
   );
 }
@@ -451,24 +524,40 @@ function BooksPage({ books, filter, setFilter, onAddBook, onLog }) {
   );
 }
 
-function AvatarDisplay({ equipped }) {
+function getItemName(id) {
+  const all = [...Object.values(cosmeticItems).flat(), ...weapons];
+  return all.find((item) => item.id === id)?.name || id;
+}
+
+function AvatarDisplay({ equipped, size = "normal" }) {
   return h(
     "div",
-    { className: "avatar-stage" },
-    h("div", { className: `pixel-avatar ${equipped.outfit}` },
+    { className: `avatar-stage ${size}` },
+    h("div", { className: "avatar-glow" }),
+    h("div", { className: "avatar-platform" }),
+    h(
+      "div",
+      { className: `pixel-avatar ${equipped.outfit}` },
       h("span", { className: `hair ${equipped.hair}` }),
-      h("span", { className: "face" }),
+      h("span", { className: "face" },
+        h("span", { className: "eye left" }),
+        h("span", { className: "eye right" })
+      ),
       h("span", { className: `body ${equipped.outfit}` }),
+      h("span", { className: `legs ${equipped.outfit}` }),
       h("span", { className: `accessory ${equipped.accessory}` }),
       h("span", { className: `weapon ${equipped.weapon}` })
     )
   );
 }
 
-function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage }) {
+function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage, level, combatStats }) {
   const [tab, setTab] = useState("Hair");
   const shopItems = [...Object.entries(cosmeticItems).flatMap(([type, items]) => items.map((item) => ({ ...item, type }))), ...weapons.map((weapon) => ({ ...weapon, type: "Weapon" }))];
-  const tabItems = cosmeticItems[tab];
+  const tabItems = tab === "Weapon" ? weapons : cosmeticItems[tab];
+  const slotKey = tab === "Accessories" ? "accessory" : tab === "Weapon" ? "weapon" : tab.toLowerCase();
+  const equippedWeapon = weapons.find((w) => w.id === equipped.weapon) || weapons[0];
+
   return h(
     "main",
     { className: "page avatar-page" },
@@ -476,26 +565,51 @@ function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage 
     h(
       "section",
       { className: "avatar-layout" },
-      h("article", { className: "panel avatar-panel" }, h(AvatarDisplay, { equipped }), h(Button, { onClick: () => setPage("Adventure") }, "Enter Adventure")),
+      h(
+        "article",
+        { className: "panel avatar-panel" },
+        h(AvatarDisplay, { equipped }),
+        h(
+          "div",
+          { className: "avatar-loadout" },
+          h("h3", null, "Current Loadout"),
+          h("div", { className: "loadout-grid" },
+            h("span", null, h("small", null, "Hair"), getItemName(equipped.hair)),
+            h("span", null, h("small", null, "Outfit"), getItemName(equipped.outfit)),
+            h("span", null, h("small", null, "Accessory"), getItemName(equipped.accessory)),
+            h("span", null, h("small", null, "Weapon"), getItemName(equipped.weapon))
+          )
+        ),
+        h(
+          "div",
+          { className: "avatar-stats" },
+          h("div", { className: "avatar-stat" }, h("strong", null, `Lv. ${level}`), h("small", null, "Level")),
+          h("div", { className: "avatar-stat" }, h("strong", null, combatStats.hp), h("small", null, "HP")),
+          h("div", { className: "avatar-stat" }, h("strong", null, combatStats.atk), h("small", null, "ATK")),
+          h("div", { className: "avatar-stat" }, h("strong", null, `+${equippedWeapon.atk}`), h("small", null, "Weapon"))
+        ),
+        h(Button, { onClick: () => setPage("Adventure") }, "Enter Adventure")
+      ),
       h(
         "article",
         { className: "panel cosmetics-panel" },
-        h("div", { className: "tabs" }, ["Hair", "Outfit", "Accessories"].map((name) => h("button", { key: name, className: tab === name ? "active" : "", onClick: () => setTab(name) }, name))),
+        h("div", { className: "tabs" }, ["Hair", "Outfit", "Accessories", "Weapon"].map((name) => h("button", { key: name, className: tab === name ? "active" : "", onClick: () => setTab(name) }, name))),
         h(
           "div",
           { className: "item-grid" },
           tabItems.map((item) => {
             const owned = inventory.includes(item.id);
+            const isEquipped = equipped[slotKey] === item.id;
             return h(
               "button",
               {
                 key: item.id,
-                className: `shop-card ${owned ? "owned" : "locked"}`,
-                onClick: () => owned && setEquipped((current) => ({ ...current, [tab === "Accessories" ? "accessory" : tab.toLowerCase()]: item.id })),
+                className: `shop-card ${owned ? "owned" : "locked"} ${isEquipped ? "equipped" : ""}`,
+                onClick: () => owned && setEquipped((current) => ({ ...current, [slotKey]: item.id })),
               },
-              h("span", null, item.preview),
+              h("span", { className: "item-preview-icon" }, item.preview),
               h("strong", null, item.name),
-              h("small", null, owned ? "Owned" : `Locked - ${item.price}g`)
+              h("small", null, isEquipped ? "Equipped" : owned ? "Owned" : `Locked - ${item.price}g`)
             );
           })
         )
@@ -512,8 +626,8 @@ function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage 
           const owned = inventory.includes(item.id);
           return h(
             "article",
-            { key: item.id, className: "shop-card" },
-            h("span", null, item.preview),
+            { key: item.id, className: `shop-card ${owned ? "owned-item" : ""}` },
+            h("span", { className: "item-preview-icon" }, item.preview),
             h("strong", null, item.name),
             h("small", null, item.atk ? `ATK +${item.atk}` : item.type),
             h(Button, { className: "secondary", onClick: () => buyItem(item), disabled: owned || item.price > coins }, owned ? "Owned" : `Buy ${item.price}g`)
@@ -583,29 +697,36 @@ function SettingsPage({ settings, setSettings, onReset }) {
   );
 }
 
-function AdminPage({ accounts, currentEmail, selectedAccountEmail, setSelectedAccountEmail, targetGameState, onAdjustAdminResource, onSetBookPages, onSetAdminRole }) {
-  const targetAccount = accounts.find((account) => account.email === selectedAccountEmail) || accounts[0];
-  const selectedGameState = targetGameState || targetAccount?.gameState || defaultGameState;
-  const selectedLevel = levelForXp(selectedGameState.xp);
-  const isRootAdmin = targetAccount?.email === ADMIN_EMAIL;
+function AdminPage({ users, selectedUser, setSelectedUser, targetState, onAdjustResource, onSetBookPages, onSetAdminRole }) {
+  const userList = Object.values(users);
+  const targetUser = users[selectedUser?.toLowerCase()] || userList[0];
+  const selectedState = targetState || getDefaultGameState();
+  const selectedLevel = levelForXp(selectedState.xp);
+  const isRootAdmin = targetUser?.username?.toLowerCase() === ADMIN_USERNAME.toLowerCase();
   return h(
     "main",
     { className: "page admin-page" },
-    h(
-      "div",
-      { className: "section-heading" },
-      h("h1", null, "Admin"),
-      h("span", { className: "skill-points" }, `${accounts.length} accounts`)
-    ),
+    h("div", { className: "section-heading" }, h("h1", null, "Admin"), h("span", { className: "skill-points" }, `${userList.length} accounts`)),
     h(
       "section",
       { className: "wide-panel admin-target" },
-      h("label", null, "Manage Account", h("select", { value: selectedAccountEmail, onChange: (event) => setSelectedAccountEmail(event.target.value) }, accounts.map((account) => h("option", { key: account.email, value: account.email }, `${account.email}${account.isAdmin ? " - admin" : ""}`)))),
-      h("div", { className: "admin-stat-strip" },
-        h("span", null, h("strong", null, selectedGameState.coins), " Gold"),
-        h("span", null, h("strong", null, selectedGameState.skillPoints), " Skill Points"),
+      h(
+        "label",
+        null,
+        "Manage Account",
+        h(
+          "select",
+          { value: targetUser?.username || "", onChange: (event) => setSelectedUser(event.target.value) },
+          userList.map((account) => h("option", { key: account.username, value: account.username }, `${account.username}${account.isAdmin ? " - admin" : ""}`))
+        )
+      ),
+      h(
+        "div",
+        { className: "admin-stat-strip" },
+        h("span", null, h("strong", null, selectedState.coins), " Gold"),
+        h("span", null, h("strong", null, selectedState.skillPoints), " Skill Points"),
         h("span", null, h("strong", null, selectedLevel.level), " Level"),
-        h("span", null, h("strong", null, selectedGameState.books.length), " Books")
+        h("span", null, h("strong", null, selectedState.books.length), " Books")
       )
     ),
     h(
@@ -614,11 +735,11 @@ function AdminPage({ accounts, currentEmail, selectedAccountEmail, setSelectedAc
       h(
         "article",
         { className: "wide-panel admin-panel" },
-        h("div", null, h("span", { className: "eyebrow" }, "Account Controls"), h("h2", null, selectedGameState.settings.displayName || targetAccount.email), h("p", null, "Change gold, skill points, XP, levels, book progress, and admin access.")),
+        h("div", null, h("span", { className: "eyebrow" }, "Account Controls"), h("h2", null, selectedState.settings.displayName || targetUser?.username), h("p", null, "Change gold, skill points, XP, levels, book progress, and admin access.")),
         h(
           "form",
-          { className: "form-grid admin-actions", onSubmit: onAdjustAdminResource },
-          h("input", { type: "hidden", name: "email", value: targetAccount.email }),
+          { className: "form-grid admin-actions", onSubmit: onAdjustResource },
+          h("input", { type: "hidden", name: "username", value: targetUser?.username || "" }),
           h("label", null, "Resource", h("select", { name: "resource" }, h("option", { value: "coins" }, "Gold"), h("option", { value: "skillPoints" }, "Skill Points"), h("option", { value: "xp" }, "XP"), h("option", { value: "level" }, "Level"))),
           h("label", null, "Action", h("select", { name: "mode" }, h("option", { value: "add" }, "Add"), h("option", { value: "take" }, "Take"), h("option", { value: "set" }, "Set exact value"))),
           h("label", null, "Amount", h("input", { name: "amount", type: "number", min: "0", step: "1", required: true })),
@@ -628,17 +749,17 @@ function AdminPage({ accounts, currentEmail, selectedAccountEmail, setSelectedAc
         h(
           "form",
           { className: "form-grid admin-actions", onSubmit: onSetBookPages },
-          h("input", { type: "hidden", name: "email", value: targetAccount.email }),
-          h("label", null, "Book", h("select", { name: "bookId", disabled: selectedGameState.books.length === 0 }, selectedGameState.books.length ? selectedGameState.books.map((book) => h("option", { key: book.id, value: book.id }, `${book.title} (${book.pagesRead}/${book.totalPages})`)) : h("option", null, "No books yet"))),
-          h("label", null, "Pages Read", h("input", { name: "pagesRead", type: "number", min: "0", step: "1", required: true, disabled: selectedGameState.books.length === 0 })),
-          h(Button, { type: "submit", className: "secondary", disabled: selectedGameState.books.length === 0 }, "Update Book Pages")
+          h("input", { type: "hidden", name: "username", value: targetUser?.username || "" }),
+          h("label", null, "Book", h("select", { name: "bookId", disabled: selectedState.books.length === 0 }, selectedState.books.length ? selectedState.books.map((book) => h("option", { key: book.id, value: book.id }, `${book.title} (${book.pagesRead}/${book.totalPages})`)) : h("option", null, "No books yet"))),
+          h("label", null, "Pages Read", h("input", { name: "pagesRead", type: "number", min: "0", step: "1", required: true, disabled: selectedState.books.length === 0 })),
+          h(Button, { type: "submit", className: "secondary", disabled: selectedState.books.length === 0 }, "Update Book Pages")
         ),
         h(
           "form",
           { className: "form-grid admin-actions", onSubmit: onSetAdminRole },
-          h("input", { type: "hidden", name: "email", value: targetAccount.email }),
-          h("label", null, "Admin Access", h("select", { key: targetAccount.email, name: "isAdmin", defaultValue: String(Boolean(targetAccount.isAdmin)), disabled: isRootAdmin }, h("option", { value: "true" }, "Admin"), h("option", { value: "false" }, "Reader"))),
-          h("p", { className: "form-hint" }, isRootAdmin ? "The root admin account cannot be demoted." : targetAccount.email === currentEmail ? "This is your current account." : "Promote or remove admin access for this account."),
+          h("input", { type: "hidden", name: "username", value: targetUser?.username || "" }),
+          h("label", null, "Admin Access", h("select", { key: targetUser?.username, name: "isAdmin", defaultValue: String(Boolean(targetUser?.isAdmin)), disabled: isRootAdmin }, h("option", { value: "true" }, "Admin"), h("option", { value: "false" }, "Reader"))),
+          h("p", { className: "form-hint" }, isRootAdmin ? "The root admin account cannot be demoted." : "Promote or remove admin access for this account."),
           h(Button, { type: "submit", className: "secondary", disabled: isRootAdmin }, "Update Access")
         )
       ),
@@ -646,16 +767,8 @@ function AdminPage({ accounts, currentEmail, selectedAccountEmail, setSelectedAc
         "aside",
         { className: "panel admin-ledger" },
         h("h2", null, "Admin History"),
-        selectedGameState.adminLog.length
-          ? selectedGameState.adminLog.map((entry) =>
-              h(
-                "div",
-                { key: entry.id, className: "ledger-item" },
-                h("strong", null, entry.summary || `${entry.delta > 0 ? "+" : ""}${entry.delta} points`),
-                h("span", null, entry.reason || "Admin adjustment"),
-                h("small", null, entry.date)
-              )
-            )
+        selectedState.adminLog.length
+          ? selectedState.adminLog.map((entry) => h("div", { key: entry.id, className: "ledger-item" }, h("strong", null, entry.summary || `${entry.delta > 0 ? "+" : ""}${entry.delta} points`), h("span", null, entry.reason || "Admin adjustment"), h("small", null, entry.date)))
           : h("p", null, "No admin changes yet.")
       )
     )
@@ -866,43 +979,91 @@ function Modal({ title, children, onClose }) {
   );
 }
 
+function AddBookForm({ onSubmit, onClose }) {
+  const [coverPreview, setCoverPreview] = useState("");
+  const [coverSource, setCoverSource] = useState("url");
+
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setCoverPreview("");
+      return;
+    }
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => setCoverPreview(loadEvent.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const urlCover = data.get("coverUrl").trim();
+    const coverUrl = coverSource === "upload" ? coverPreview : urlCover;
+    onSubmit({ data, coverUrl });
+  };
+
+  return h(
+    "form",
+    { className: "form-grid", onSubmit: handleSubmit },
+    h("label", null, "Book Title", h("input", { name: "title", required: true })),
+    h("label", null, "Author", h("input", { name: "author" })),
+    h("label", null, "Genre", h("select", { name: "genre" }, genres.map((genre) => h("option", { key: genre }, genre)))),
+    h("label", null, "Total Pages", h("input", { name: "totalPages", type: "number", min: "1", required: true })),
+    h("label", null, "Start Date", h("input", { name: "startDate", type: "date" })),
+    h(
+      "div",
+      { className: "cover-upload-section" },
+      h("span", { className: "cover-upload-label" }, "Book Cover"),
+      h(
+        "div",
+        { className: "cover-source-tabs" },
+        h("button", { type: "button", className: coverSource === "url" ? "active" : "", onClick: () => setCoverSource("url") }, "Image URL"),
+        h("button", { type: "button", className: coverSource === "upload" ? "active" : "", onClick: () => setCoverSource("upload") }, "Upload File")
+      ),
+      coverSource === "url"
+        ? h("input", { name: "coverUrl", type: "url", placeholder: "https://example.com/cover.jpg" })
+        : h(
+            "div",
+            { className: "cover-file-upload" },
+            h("input", { type: "file", accept: "image/*", onChange: handleFileChange, id: "cover-file-input" }),
+            h(
+              "label",
+              { htmlFor: "cover-file-input", className: "cover-dropzone" },
+              coverPreview
+                ? h("img", { src: coverPreview, alt: "Cover preview", className: "cover-preview-img" })
+                : h("span", null, "Click to choose an image (JPG, PNG, WebP)")
+            )
+          )
+    ),
+    h("div", { className: "form-actions" }, h(Button, { type: "button", className: "secondary", onClick: onClose }, "Cancel"), h(Button, { type: "submit" }, "Save Book"))
+  );
+}
+
 function App() {
-  const initialAccounts = useMemo(loadAccounts, []);
-  const initialCurrentEmail = useMemo(() => {
-    const storedEmail = normalizeEmail(localStorage.getItem(CURRENT_ACCOUNT_KEY));
-    return initialAccounts.some((account) => account.email === storedEmail) ? storedEmail : "";
-  }, [initialAccounts]);
-  const initialAccount = initialAccounts.find((account) => account.email === initialCurrentEmail);
-  const saved = initialAccount?.gameState || cloneGameState();
-  const [accounts, setAccounts] = useState(initialAccounts);
-  const [currentEmail, setCurrentEmail] = useState(initialCurrentEmail);
-  const [authMode, setAuthMode] = useState("login");
-  const [selectedAccountEmail, setSelectedAccountEmail] = useState(initialCurrentEmail || ADMIN_EMAIL);
+  const initialState = useMemo(getDefaultGameState, []);
+  const [user, setUser] = useState(null);
   const [page, setPage] = useState("Home");
-  const [books, setBooks] = useState(saved.books);
-  const [activity, setActivity] = useState(saved.activity);
+  const [books, setBooks] = useState(initialState.books);
+  const [activity, setActivity] = useState(initialState.activity);
   const [filter, setFilter] = useState("All");
-  const [xp, setXp] = useState(saved.xp);
-  const [coins, setCoins] = useState(saved.coins);
-  const [totalCoinsEarned, setTotalCoinsEarned] = useState(saved.totalCoinsEarned);
-  const [skillPoints, setSkillPoints] = useState(saved.skillPoints);
-  const [skills, setSkills] = useState(saved.skills);
-  const [streak, setStreak] = useState(saved.streak);
+  const [xp, setXp] = useState(initialState.xp);
+  const [coins, setCoins] = useState(initialState.coins);
+  const [totalCoinsEarned, setTotalCoinsEarned] = useState(initialState.totalCoinsEarned);
+  const [skillPoints, setSkillPoints] = useState(initialState.skillPoints);
+  const [skills, setSkills] = useState(initialState.skills);
+  const [streak, setStreak] = useState(initialState.streak);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState("");
   const [levelOverlay, setLevelOverlay] = useState(null);
   const [achievementPop, setAchievementPop] = useState(null);
   const [coinFloat, setCoinFloat] = useState(null);
-  const [inventory, setInventory] = useState(saved.inventory);
-  const [equipped, setEquipped] = useState(saved.equipped);
-  const [adventureProgress, setAdventureProgress] = useState(saved.adventureProgress);
-  const [achievements, setAchievements] = useState(saved.achievements);
-  const [adminLog, setAdminLog] = useState(saved.adminLog || []);
-  const [settings, setSettings] = useState(saved.settings);
-
-  const currentAccount = accounts.find((account) => account.email === currentEmail);
-  const isAdmin = Boolean(currentAccount?.isAdmin);
-  const selectedAccount = accounts.find((account) => account.email === selectedAccountEmail) || accounts[0];
+  const [inventory, setInventory] = useState(initialState.inventory);
+  const [equipped, setEquipped] = useState(initialState.equipped);
+  const [adventureProgress, setAdventureProgress] = useState(initialState.adventureProgress);
+  const [achievements, setAchievements] = useState(initialState.achievements);
+  const [settings, setSettings] = useState(initialState.settings);
+  const [ready, setReady] = useState(false);
 
   const levelInfo = useMemo(() => levelForXp(xp), [xp]);
   const streakMultiplier = streak >= 30 ? 2 : streak >= 7 ? 1.5 : streak >= 3 ? 1.2 : 1;
@@ -919,146 +1080,64 @@ function App() {
     xp,
   };
 
+  const handleLogin = (username, silent = false) => {
+    const saved = loadUserData(username);
+    setUser(username);
+    setBooks(saved.books);
+    setActivity(saved.activity);
+    setXp(saved.xp);
+    setCoins(saved.coins);
+    setTotalCoinsEarned(saved.totalCoinsEarned);
+    setSkillPoints(saved.skillPoints);
+    setSkills(saved.skills);
+    setStreak(saved.streak);
+    setInventory(saved.inventory);
+    setEquipped(saved.equipped);
+    setAdventureProgress(saved.adventureProgress);
+    setAchievements(saved.achievements);
+    setSettings(saved.settings);
+    setPage("Home");
+    setReady(true);
+    if (!silent) setToast(`Welcome back, ${username}!`);
+  };
+
+  const currentGameState = { books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, settings };
+
+  const handleLogout = () => {
+    if (user) {
+      saveUserData(user, currentGameState);
+    }
+    clearSession();
+    setUser(null);
+    setPage("Home");
+  };
+
+  useEffect(() => {
+    const session = getSession();
+    if (session?.username) {
+      handleLogin(session.username, true);
+    } else {
+      setReady(true);
+    }
+  }, []);
+
   useEffect(() => {
     document.body.classList.toggle("light-mode", !settings.darkMode);
   }, [settings.darkMode]);
 
   useEffect(() => {
-    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-  }, [accounts]);
+    if (!user) return;
+    saveUserData(user, currentGameState);
+  }, [user, books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, settings]);
 
   useEffect(() => {
-    if (currentEmail) {
-      localStorage.setItem(CURRENT_ACCOUNT_KEY, currentEmail);
-      return;
-    }
-    localStorage.removeItem(CURRENT_ACCOUNT_KEY);
-  }, [currentEmail]);
-
-  useEffect(() => {
-    if (!currentEmail) return;
-    const gameState = { books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, adminLog, settings };
-    setAccounts((current) => current.map((account) => (account.email === currentEmail ? { ...account, gameState: sanitizeGameState(gameState) } : account)));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
-  }, [currentEmail, books, activity, xp, coins, totalCoinsEarned, skillPoints, skills, streak, inventory, equipped, adventureProgress, achievements, adminLog, settings]);
-
-  useEffect(() => {
-    if (page === "Home" && books.length === 0 && !settings.seenOnboarding && !modal) {
+    if (user && page === "Home" && books.length === 0 && !settings.seenOnboarding && !modal) {
       setModal({ type: "welcome" });
     }
-  }, [currentEmail, page, books.length, settings.seenOnboarding, modal]);
+  }, [user, page, books.length, settings.seenOnboarding, modal]);
 
   useEffect(() => {
-    if (page === "Admin" && !isAdmin) {
-      setPage("Home");
-    }
-  }, [page, isAdmin]);
-
-  useEffect(() => {
-    if (!accounts.some((account) => account.email === selectedAccountEmail)) {
-      setSelectedAccountEmail(currentEmail || accounts[0]?.email || ADMIN_EMAIL);
-    }
-  }, [accounts, currentEmail, selectedAccountEmail]);
-
-  const applyGameState = (gameState) => {
-    const next = sanitizeGameState(gameState);
-    setBooks(next.books);
-    setActivity(next.activity);
-    setXp(next.xp);
-    setCoins(next.coins);
-    setTotalCoinsEarned(next.totalCoinsEarned);
-    setSkillPoints(next.skillPoints);
-    setSkills(next.skills);
-    setStreak(next.streak);
-    setInventory(next.inventory);
-    setEquipped(next.equipped);
-    setAdventureProgress(next.adventureProgress);
-    setAchievements(next.achievements);
-    setAdminLog(next.adminLog);
-    setSettings(next.settings);
-  };
-
-  const signInAccount = (account) => {
-    setCurrentEmail(account.email);
-    setSelectedAccountEmail(account.email);
-    setPage("Home");
-    setModal(null);
-    applyGameState(account.gameState);
-  };
-
-  const login = (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const email = normalizeEmail(data.get("email"));
-    const password = String(data.get("password") || "");
-    const account = accounts.find((item) => item.email === email && item.password === password);
-    if (!account) {
-      setToast("Email or password is incorrect.");
-      return;
-    }
-    signInAccount(account);
-    setToast(`Signed in as ${email}.`);
-  };
-
-  const register = (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const email = normalizeEmail(data.get("email"));
-    const password = String(data.get("password") || "");
-    if (!email || !password) {
-      setToast("Enter an email and password.");
-      return;
-    }
-    if (email === ADMIN_EMAIL || accounts.some((account) => account.email === email)) {
-      setToast("That account already exists.");
-      return;
-    }
-    const account = {
-      email,
-      password,
-      isAdmin: false,
-      gameState: { ...cloneGameState(), settings: { ...defaultGameState.settings, displayName: email.split("@")[0] || "Reader" } },
-    };
-    setAccounts((current) => [...current, account]);
-    signInAccount(account);
-    setToast(`Account created for ${email}.`);
-  };
-
-  const logout = () => {
-    setCurrentEmail("");
-    setPage("Home");
-    setModal(null);
-    setToast("Signed out.");
-  };
-
-  const addAdminLogEntry = (gameState, summary, reason) => ({
-    ...gameState,
-    adminLog: [
-      {
-        id: Date.now(),
-        summary,
-        reason,
-        date: new Date().toLocaleString("en-US", { month: "short", day: "2-digit", hour: "numeric", minute: "2-digit" }),
-      },
-      ...(gameState.adminLog || []),
-    ].slice(0, 20),
-  });
-
-  const updateAccountGameState = (email, updater) => {
-    let nextGameState = null;
-    setAccounts((current) =>
-      current.map((account) => {
-        if (account.email !== email) return account;
-        nextGameState = sanitizeGameState(updater(sanitizeGameState(account.gameState)));
-        return { ...account, gameState: nextGameState };
-      })
-    );
-    if (email === currentEmail && nextGameState) {
-      applyGameState(nextGameState);
-    }
-  };
-
-  useEffect(() => {
+    if (!user) return;
     const context = { books, activity, stats, streak, skills, inventory, adventureProgress, totalCoinsEarned, levelInfo };
     const newlyUnlocked = achievementsCatalog.filter((achievement) => !achievements.includes(achievement.id) && achievement.test(context));
     if (!newlyUnlocked.length) return;
@@ -1126,9 +1205,7 @@ function App() {
     setToast(completedBonus ? `Quest complete! ${book.title} awarded a ${completedBonus} XP bonus.` : `Logged ${pagesToLog} pages for ${book.title}.`);
   };
 
-  const addBook = (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
+  const addBook = ({ data, coverUrl }) => {
     const title = data.get("title").trim();
     if (!title) return;
     setBooks((current) => [
@@ -1141,7 +1218,7 @@ function App() {
         pagesRead: 0,
         status: "Want to Read",
         startDate: data.get("startDate"),
-        coverUrl: data.get("coverUrl").trim(),
+        coverUrl: coverUrl || "",
         xpEarned: 0,
       },
       ...current,
@@ -1213,89 +1290,18 @@ function App() {
     setEquipped(defaultGameState.equipped);
     setAdventureProgress(defaultGameState.adventureProgress);
     setAchievements(defaultGameState.achievements);
-    setAdminLog(defaultGameState.adminLog);
     setSettings((current) => ({ ...defaultGameState.settings, darkMode: current.darkMode }));
     setPage("Home");
     setModal(null);
     setToast("Progress reset.");
   };
 
-  const adjustAdminResource = (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const email = normalizeEmail(data.get("email"));
-    const resource = data.get("resource");
-    const mode = data.get("mode");
-    const amount = Math.floor(Number(data.get("amount")));
-    const reason = data.get("reason").trim();
-    if (!isAdmin || !email) return;
-    if (Number.isNaN(amount) || amount < 0) {
-      setToast("Enter a valid amount.");
-      return;
-    }
-    const resourceLabels = { coins: "gold", skillPoints: "skill points", xp: "XP", level: "level" };
-    if (!resourceLabels[resource]) {
-      setToast("Choose a resource to update.");
-      return;
-    }
-    updateAccountGameState(email, (gameState) => {
-      const next = sanitizeGameState(gameState);
-      const key = resource === "level" ? "xp" : resource;
-      const currentValue = resource === "level" ? levelForXp(next.xp).level : Number(next[key]) || 0;
-      let nextValue = mode === "set" ? amount : mode === "take" ? currentValue - amount : currentValue + amount;
-      nextValue = Math.max(resource === "level" ? 1 : 0, nextValue);
-      if (resource === "level") {
-        next.xp = xpForLevel(nextValue);
-      } else {
-        next[key] = nextValue;
-      }
-      if (resource === "coins" && next.coins > next.totalCoinsEarned) {
-        next.totalCoinsEarned = next.coins;
-      }
-      const summary = `${resourceLabels[resource]} ${currentValue} -> ${nextValue}`;
-      return addAdminLogEntry(next, summary, reason);
-    });
-    event.currentTarget.reset();
-    setToast(`Updated ${resourceLabels[resource]} for ${email}.`);
-  };
-
-  const setBookPages = (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const email = normalizeEmail(data.get("email"));
-    const bookId = String(data.get("bookId"));
-    const pagesRead = Math.floor(Number(data.get("pagesRead")));
-    if (!isAdmin || !email || Number.isNaN(pagesRead)) return;
-    updateAccountGameState(email, (gameState) => {
-      const next = sanitizeGameState(gameState);
-      let summary = "Book pages updated";
-      next.books = next.books.map((book) => {
-        if (String(book.id) !== bookId) return book;
-        const nextPages = clamp(pagesRead, 0, book.totalPages);
-        summary = `${book.title} pages ${book.pagesRead} -> ${nextPages}`;
-        return { ...book, pagesRead: nextPages, status: nextPages >= book.totalPages ? "Completed" : nextPages > 0 ? "Reading" : "Want to Read" };
-      });
-      return addAdminLogEntry(next, summary, "Book progress adjustment");
-    });
-    event.currentTarget.reset();
-    setToast(`Updated book pages for ${email}.`);
-  };
-
-  const setAdminRole = (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const email = normalizeEmail(data.get("email"));
-    const nextIsAdmin = data.get("isAdmin") === "true";
-    if (!isAdmin || !email || email === ADMIN_EMAIL) return;
-    setAccounts((current) => current.map((account) => (account.email === email ? { ...account, isAdmin: nextIsAdmin } : account)));
-    setToast(`${email} is now ${nextIsAdmin ? "an admin" : "a reader"}.`);
-  };
-
   const modalBook = modal?.type === "log" ? books.find((book) => book.id === modal.bookId) : null;
   const modalBookRemaining = modalBook ? pagesRemaining(modalBook) : 0;
 
-  if (!currentEmail) {
-    return h(React.Fragment, null, h(LoginPage, { authMode, setAuthMode, onLogin: login, onRegister: register }), h(Toast, { toast, onDone: () => setToast("") }));
+  if (!ready) return null;
+  if (!user) {
+    return h(AuthPage, { onLogin: handleLogin });
   }
 
   const content =
@@ -1304,19 +1310,17 @@ function App() {
       : page === "My Books"
         ? h(BooksPage, { books, filter, setFilter, onAddBook: openAddBook, onLog: openLogBook })
         : page === "Avatar"
-          ? h(AvatarPage, { coins, inventory, equipped, setEquipped, buyItem, setPage })
+          ? h(AvatarPage, { coins, inventory, equipped, setEquipped, buyItem, setPage, level: levelInfo.level, combatStats })
           : page === "Adventure"
             ? h(AdventurePage, { level: levelInfo.level, coins, combatStats, awardAdventure, inventory })
             : page === "Achievements"
               ? h(AchievementsPage, { unlocked: achievements })
-              : page === "Admin" && isAdmin
-                ? h(AdminPage, { accounts, currentEmail, selectedAccountEmail, setSelectedAccountEmail, targetGameState: selectedAccount?.gameState, onAdjustAdminResource: adjustAdminResource, onSetBookPages: setBookPages, onSetAdminRole: setAdminRole })
-                : h(SettingsPage, { settings, setSettings, onReset: () => setModal({ type: "reset" }) });
+              : h(SettingsPage, { settings, setSettings, onReset: () => setModal({ type: "reset" }) });
 
   return h(
     React.Fragment,
     null,
-    h(Nav, { page, setPage, levelInfo, coins, streakMultiplier, coinFloat, isAdmin, currentEmail, onLogout: logout }),
+    h(Nav, { page, setPage, levelInfo, coins, streakMultiplier, coinFloat, user, onLogout: handleLogout }),
     content,
     modal?.type === "welcome" &&
       h(
@@ -1333,17 +1337,7 @@ function App() {
       h(
         Modal,
         { title: "Add New Book", onClose: closeModal },
-        h(
-          "form",
-          { className: "form-grid", onSubmit: addBook },
-          h("label", null, "Book Title", h("input", { name: "title", required: true })),
-          h("label", null, "Author", h("input", { name: "author" })),
-          h("label", null, "Genre", h("select", { name: "genre" }, genres.map((genre) => h("option", { key: genre }, genre)))),
-          h("label", null, "Total Pages", h("input", { name: "totalPages", type: "number", min: "1", required: true })),
-          h("label", null, "Start Date", h("input", { name: "startDate", type: "date" })),
-          h("label", null, "Cover Image URL", h("input", { name: "coverUrl", type: "url" })),
-          h(Button, { type: "submit" }, "Save Book")
-        )
+        h(AddBookForm, { onSubmit: addBook, onClose: closeModal })
       ),
     modal?.type === "log" &&
       h(
