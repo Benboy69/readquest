@@ -147,6 +147,78 @@ function todayLabel() {
   return new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit" });
 }
 
+const STORAGE_USERS = "readquest_users";
+const STORAGE_SESSION = "readquest_session";
+
+function hashPassword(password) {
+  let hash = 0;
+  for (let i = 0; i < password.length; i += 1) {
+    hash = (hash << 5) - hash + password.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash.toString(36);
+}
+
+function getUsers() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_USERS)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveUsers(users) {
+  localStorage.setItem(STORAGE_USERS, JSON.stringify(users));
+}
+
+function getUserDataKey(username) {
+  return `readquest_data_${username.toLowerCase()}`;
+}
+
+function getDefaultGameState() {
+  return {
+    books: startingBooks,
+    activity: startingActivity,
+    xp: 1800,
+    coins: 275,
+    skillPoints: 3,
+    skills: { speed: 1, night: 0, biblio: 0, sword: 0, will: 0, reflex: 0, fashion: 0, treasure: 0 },
+    streak: 7,
+    inventory: ["hair-raven", "outfit-apprentice", "acc-none", "wood-staff"],
+    equipped: { hair: "hair-raven", outfit: "outfit-apprentice", accessory: "acc-none", weapon: "wood-staff" },
+  };
+}
+
+function loadUserData(username) {
+  try {
+    const saved = localStorage.getItem(getUserDataKey(username));
+    return saved ? { ...getDefaultGameState(), ...JSON.parse(saved) } : getDefaultGameState();
+  } catch {
+    return getDefaultGameState();
+  }
+}
+
+function saveUserData(username, state) {
+  const { books, activity, xp, coins, skillPoints, skills, streak, inventory, equipped } = state;
+  localStorage.setItem(getUserDataKey(username), JSON.stringify({ books, activity, xp, coins, skillPoints, skills, streak, inventory, equipped }));
+}
+
+function getSession() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_SESSION));
+  } catch {
+    return null;
+  }
+}
+
+function setSession(username) {
+  localStorage.setItem(STORAGE_SESSION, JSON.stringify({ username }));
+}
+
+function clearSession() {
+  localStorage.removeItem(STORAGE_SESSION);
+}
+
 function Button({ children, className = "", ...props }) {
   return h("button", { className: `btn ${className}`, ...props }, children);
 }
@@ -181,7 +253,7 @@ function Toast({ toast, onDone }) {
   );
 }
 
-function Nav({ page, setPage, levelInfo, coins, streakMultiplier }) {
+function Nav({ page, setPage, levelInfo, coins, streakMultiplier, user, onLogout }) {
   const links = ["Home", "My Books", "Avatar", "Adventure"];
   return h(
     "nav",
@@ -204,7 +276,72 @@ function Nav({ page, setPage, levelInfo, coins, streakMultiplier }) {
           { key: link, className: page === link ? "active" : "", onClick: () => setPage(link) },
           link
         )
-      )
+      ),
+      h("span", { className: "user-badge" }, user),
+      h("button", { className: "logout-btn", onClick: onLogout, title: "Log out" }, "Log Out")
+    )
+  );
+}
+
+function AuthPage({ onLogin }) {
+  const [mode, setMode] = useState("login");
+  const [error, setError] = useState("");
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    setError("");
+    const data = new FormData(event.currentTarget);
+    const username = data.get("username").trim();
+    const password = data.get("password");
+    if (!username || !password) {
+      setError("Username and password are required.");
+      return;
+    }
+    const users = getUsers();
+    if (mode === "signup") {
+      if (users[username.toLowerCase()]) {
+        setError("That username is already taken.");
+        return;
+      }
+      users[username.toLowerCase()] = { username, passwordHash: hashPassword(password) };
+      saveUsers(users);
+      saveUserData(username, getDefaultGameState());
+      setSession(username);
+      onLogin(username);
+      return;
+    }
+    const user = users[username.toLowerCase()];
+    if (!user || user.passwordHash !== hashPassword(password)) {
+      setError("Invalid username or password.");
+      return;
+    }
+    setSession(username);
+    onLogin(username);
+  };
+
+  return h(
+    "main",
+    { className: "auth-page" },
+    h(
+      "section",
+      { className: "auth-card" },
+      h("h1", null, "ReadQuest"),
+      h("p", { className: "auth-tagline" }, "Track your reading. Level up your hero."),
+      h(
+        "div",
+        { className: "tabs auth-tabs" },
+        h("button", { type: "button", className: mode === "login" ? "active" : "", onClick: () => { setMode("login"); setError(""); } }, "Log In"),
+        h("button", { type: "button", className: mode === "signup" ? "active" : "", onClick: () => { setMode("signup"); setError(""); } }, "Sign Up")
+      ),
+      h(
+        "form",
+        { className: "form-grid auth-form", onSubmit: handleSubmit },
+        h("label", null, "Username", h("input", { name: "username", required: true, autoComplete: "username", autoFocus: true })),
+        h("label", null, "Password", h("input", { name: "password", type: "password", required: true, autoComplete: mode === "login" ? "current-password" : "new-password", minLength: 4 })),
+        error && h("p", { className: "auth-error" }, error),
+        h(Button, { type: "submit" }, mode === "login" ? "Enter Quest" : "Create Account")
+      ),
+      h("p", { className: "auth-note" }, "Your progress is saved locally in this browser.")
     )
   );
 }
@@ -328,24 +465,40 @@ function BooksPage({ books, filter, setFilter, onAddBook, onLog }) {
   );
 }
 
-function AvatarDisplay({ equipped }) {
+function getItemName(id) {
+  const all = [...Object.values(cosmeticItems).flat(), ...weapons];
+  return all.find((item) => item.id === id)?.name || id;
+}
+
+function AvatarDisplay({ equipped, size = "normal" }) {
   return h(
     "div",
-    { className: "avatar-stage" },
-    h("div", { className: `pixel-avatar ${equipped.outfit}` },
+    { className: `avatar-stage ${size}` },
+    h("div", { className: "avatar-glow" }),
+    h("div", { className: "avatar-platform" }),
+    h(
+      "div",
+      { className: `pixel-avatar ${equipped.outfit}` },
       h("span", { className: `hair ${equipped.hair}` }),
-      h("span", { className: "face" }),
+      h("span", { className: "face" },
+        h("span", { className: "eye left" }),
+        h("span", { className: "eye right" })
+      ),
       h("span", { className: `body ${equipped.outfit}` }),
+      h("span", { className: `legs ${equipped.outfit}` }),
       h("span", { className: `accessory ${equipped.accessory}` }),
       h("span", { className: `weapon ${equipped.weapon}` })
     )
   );
 }
 
-function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage }) {
+function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage, level, combatStats }) {
   const [tab, setTab] = useState("Hair");
   const shopItems = [...Object.entries(cosmeticItems).flatMap(([type, items]) => items.map((item) => ({ ...item, type }))), ...weapons.map((weapon) => ({ ...weapon, type: "Weapon" }))];
-  const tabItems = cosmeticItems[tab];
+  const tabItems = tab === "Weapon" ? weapons : cosmeticItems[tab];
+  const slotKey = tab === "Accessories" ? "accessory" : tab === "Weapon" ? "weapon" : tab.toLowerCase();
+  const equippedWeapon = weapons.find((w) => w.id === equipped.weapon) || weapons[0];
+
   return h(
     "main",
     { className: "page avatar-page" },
@@ -353,26 +506,51 @@ function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage 
     h(
       "section",
       { className: "avatar-layout" },
-      h("article", { className: "panel avatar-panel" }, h(AvatarDisplay, { equipped }), h(Button, { onClick: () => setPage("Adventure") }, "Enter Adventure")),
+      h(
+        "article",
+        { className: "panel avatar-panel" },
+        h(AvatarDisplay, { equipped }),
+        h(
+          "div",
+          { className: "avatar-loadout" },
+          h("h3", null, "Current Loadout"),
+          h("div", { className: "loadout-grid" },
+            h("span", null, h("small", null, "Hair"), getItemName(equipped.hair)),
+            h("span", null, h("small", null, "Outfit"), getItemName(equipped.outfit)),
+            h("span", null, h("small", null, "Accessory"), getItemName(equipped.accessory)),
+            h("span", null, h("small", null, "Weapon"), getItemName(equipped.weapon))
+          )
+        ),
+        h(
+          "div",
+          { className: "avatar-stats" },
+          h("div", { className: "avatar-stat" }, h("strong", null, `Lv. ${level}`), h("small", null, "Level")),
+          h("div", { className: "avatar-stat" }, h("strong", null, combatStats.hp), h("small", null, "HP")),
+          h("div", { className: "avatar-stat" }, h("strong", null, combatStats.atk), h("small", null, "ATK")),
+          h("div", { className: "avatar-stat" }, h("strong", null, `+${equippedWeapon.atk}`), h("small", null, "Weapon"))
+        ),
+        h(Button, { onClick: () => setPage("Adventure") }, "Enter Adventure")
+      ),
       h(
         "article",
         { className: "panel cosmetics-panel" },
-        h("div", { className: "tabs" }, ["Hair", "Outfit", "Accessories"].map((name) => h("button", { key: name, className: tab === name ? "active" : "", onClick: () => setTab(name) }, name))),
+        h("div", { className: "tabs" }, ["Hair", "Outfit", "Accessories", "Weapon"].map((name) => h("button", { key: name, className: tab === name ? "active" : "", onClick: () => setTab(name) }, name))),
         h(
           "div",
           { className: "item-grid" },
           tabItems.map((item) => {
             const owned = inventory.includes(item.id);
+            const isEquipped = equipped[slotKey] === item.id;
             return h(
               "button",
               {
                 key: item.id,
-                className: `shop-card ${owned ? "owned" : "locked"}`,
-                onClick: () => owned && setEquipped((current) => ({ ...current, [tab === "Accessories" ? "accessory" : tab.toLowerCase()]: item.id })),
+                className: `shop-card ${owned ? "owned" : "locked"} ${isEquipped ? "equipped" : ""}`,
+                onClick: () => owned && setEquipped((current) => ({ ...current, [slotKey]: item.id })),
               },
-              h("span", null, item.preview),
+              h("span", { className: "item-preview-icon" }, item.preview),
               h("strong", null, item.name),
-              h("small", null, owned ? "Owned" : `Locked - ${item.price}g`)
+              h("small", null, isEquipped ? "Equipped" : owned ? "Owned" : `Locked - ${item.price}g`)
             );
           })
         )
@@ -389,8 +567,8 @@ function AvatarPage({ coins, inventory, equipped, setEquipped, buyItem, setPage 
           const owned = inventory.includes(item.id);
           return h(
             "article",
-            { key: item.id, className: "shop-card" },
-            h("span", null, item.preview),
+            { key: item.id, className: `shop-card ${owned ? "owned-item" : ""}` },
+            h("span", { className: "item-preview-icon" }, item.preview),
             h("strong", null, item.name),
             h("small", null, item.atk ? `ATK +${item.atk}` : item.type),
             h(Button, { className: "secondary", onClick: () => buyItem(item), disabled: owned || item.price > coins }, owned ? "Owned" : `Buy ${item.price}g`)
@@ -590,7 +768,69 @@ function Modal({ title, children, onClose }) {
   );
 }
 
+function AddBookForm({ onSubmit, onClose }) {
+  const [coverPreview, setCoverPreview] = useState("");
+  const [coverSource, setCoverSource] = useState("url");
+
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setCoverPreview("");
+      return;
+    }
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => setCoverPreview(loadEvent.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const urlCover = data.get("coverUrl").trim();
+    const coverUrl = coverSource === "upload" ? coverPreview : urlCover;
+    onSubmit({ data, coverUrl });
+  };
+
+  return h(
+    "form",
+    { className: "form-grid", onSubmit: handleSubmit },
+    h("label", null, "Book Title", h("input", { name: "title", required: true })),
+    h("label", null, "Author", h("input", { name: "author" })),
+    h("label", null, "Genre", h("select", { name: "genre" }, genres.map((genre) => h("option", { key: genre }, genre)))),
+    h("label", null, "Total Pages", h("input", { name: "totalPages", type: "number", min: "1", required: true })),
+    h("label", null, "Start Date", h("input", { name: "startDate", type: "date" })),
+    h(
+      "div",
+      { className: "cover-upload-section" },
+      h("span", { className: "cover-upload-label" }, "Book Cover"),
+      h(
+        "div",
+        { className: "cover-source-tabs" },
+        h("button", { type: "button", className: coverSource === "url" ? "active" : "", onClick: () => setCoverSource("url") }, "Image URL"),
+        h("button", { type: "button", className: coverSource === "upload" ? "active" : "", onClick: () => setCoverSource("upload") }, "Upload File")
+      ),
+      coverSource === "url"
+        ? h("input", { name: "coverUrl", type: "url", placeholder: "https://example.com/cover.jpg" })
+        : h(
+            "div",
+            { className: "cover-file-upload" },
+            h("input", { type: "file", accept: "image/*", onChange: handleFileChange, id: "cover-file-input" }),
+            h(
+              "label",
+              { htmlFor: "cover-file-input", className: "cover-dropzone" },
+              coverPreview
+                ? h("img", { src: coverPreview, alt: "Cover preview", className: "cover-preview-img" })
+                : h("span", null, "Click to choose an image (JPG, PNG, WebP)")
+            )
+          )
+    ),
+    h("div", { className: "form-actions" }, h(Button, { type: "button", className: "secondary", onClick: onClose }, "Cancel"), h(Button, { type: "submit" }, "Save Book"))
+  );
+}
+
 function App() {
+  const [user, setUser] = useState(null);
   const [page, setPage] = useState("Home");
   const [books, setBooks] = useState(startingBooks);
   const [activity, setActivity] = useState(startingActivity);
@@ -605,8 +845,55 @@ function App() {
   const [levelOverlay, setLevelOverlay] = useState(null);
   const [inventory, setInventory] = useState(["hair-raven", "outfit-apprentice", "acc-none", "wood-staff"]);
   const [equipped, setEquipped] = useState({ hair: "hair-raven", outfit: "outfit-apprentice", accessory: "acc-none", weapon: "wood-staff" });
+  const [ready, setReady] = useState(false);
+
+  const handleLogin = (username, silent = false) => {
+    const saved = loadUserData(username);
+    setUser(username);
+    setBooks(saved.books);
+    setActivity(saved.activity);
+    setXp(saved.xp);
+    setCoins(saved.coins);
+    setSkillPoints(saved.skillPoints);
+    setSkills(saved.skills);
+    setStreak(saved.streak);
+    setInventory(saved.inventory);
+    setEquipped(saved.equipped);
+    setPage("Home");
+    setReady(true);
+    if (!silent) setToast(`Welcome back, ${username}!`);
+  };
+
+  const handleLogout = () => {
+    if (user) {
+      saveUserData(user, { books, activity, xp, coins, skillPoints, skills, streak, inventory, equipped });
+    }
+    clearSession();
+    setUser(null);
+    setPage("Home");
+  };
+
+  useEffect(() => {
+    const session = getSession();
+    if (session?.username) {
+      handleLogin(session.username, true);
+    } else {
+      setReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    saveUserData(user, { books, activity, xp, coins, skillPoints, skills, streak, inventory, equipped });
+  }, [user, books, activity, xp, coins, skillPoints, skills, streak, inventory, equipped]);
 
   const levelInfo = useMemo(() => levelForXp(xp), [xp]);
+
+  if (!ready) return null;
+  if (!user) {
+    return h(AuthPage, { onLogin: handleLogin });
+  }
+
   const streakMultiplier = streak >= 30 ? 2 : streak >= 7 ? 1.5 : streak >= 3 ? 1.2 : 1;
   const equippedWeapon = weapons.find((weapon) => weapon.id === equipped.weapon) || weapons[0];
   const combatStats = {
@@ -662,9 +949,7 @@ function App() {
     setToast(completedBonus ? `Quest complete! ${book.title} awarded a ${completedBonus} XP bonus.` : `Logged ${pages} pages for ${book.title}.`);
   };
 
-  const addBook = (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
+  const addBook = ({ data, coverUrl }) => {
     const title = data.get("title").trim();
     if (!title) return;
     setBooks((current) => [
@@ -677,7 +962,7 @@ function App() {
         pagesRead: 0,
         status: "Want to Read",
         startDate: data.get("startDate"),
-        coverUrl: data.get("coverUrl").trim(),
+        coverUrl: coverUrl || "",
         xpEarned: 0,
       },
       ...current,
@@ -715,30 +1000,15 @@ function App() {
       : page === "My Books"
         ? h(BooksPage, { books, filter, setFilter, onAddBook: () => setModal({ type: "add" }), onLog: (bookId) => setModal({ type: "log", bookId }) })
         : page === "Avatar"
-          ? h(AvatarPage, { coins, inventory, equipped, setEquipped, buyItem, setPage })
+          ? h(AvatarPage, { coins, inventory, equipped, setEquipped, buyItem, setPage, level: levelInfo.level, combatStats })
           : h(AdventurePage, { level: levelInfo.level, coins, combatStats, awardAdventure, inventory });
 
   return h(
     React.Fragment,
     null,
-    h(Nav, { page, setPage, levelInfo, coins, streakMultiplier }),
+    h(Nav, { page, setPage, levelInfo, coins, streakMultiplier, user, onLogout: handleLogout }),
     content,
-    modal?.type === "add" &&
-      h(
-        Modal,
-        { title: "Add New Book", onClose: () => setModal(null) },
-        h(
-          "form",
-          { className: "form-grid", onSubmit: addBook },
-          h("label", null, "Book Title", h("input", { name: "title", required: true })),
-          h("label", null, "Author", h("input", { name: "author" })),
-          h("label", null, "Genre", h("select", { name: "genre" }, genres.map((genre) => h("option", { key: genre }, genre)))),
-          h("label", null, "Total Pages", h("input", { name: "totalPages", type: "number", min: "1", required: true })),
-          h("label", null, "Start Date", h("input", { name: "startDate", type: "date" })),
-          h("label", null, "Cover Image URL", h("input", { name: "coverUrl", type: "url" })),
-          h(Button, { type: "submit" }, "Save Book")
-        )
-      ),
+    modal?.type === "add" && h(Modal, { title: "Add New Book", onClose: () => setModal(null) }, h(AddBookForm, { onSubmit: addBook, onClose: () => setModal(null) })),
     modal?.type === "log" &&
       h(
         Modal,
